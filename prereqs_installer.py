@@ -8,12 +8,19 @@ import sys
 from typing import Optional, List, Tuple
 
 
+# ============================================================================
+# 调试模式: 设置为 True 可强制测试安装流程（用于在已安装的电脑上模拟全新环境）
+# 使用: 运行前执行 `set STICK_CALIBRATOR_TEST_MODE=1` 或 `$env:STICK_CALIBRATOR_TEST_MODE=1`
+# ============================================================================
+_TEST_MODE = os.environ.get("STICK_CALIBRATOR_TEST_MODE", "").lower() in ("1", "true", "yes")
+
+
 def _is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
 def _base_dir() -> str:
-    # onefile 模式下资源会解压到 sys._MEIPASS
+    # frozen 时资源在 _MEIPASS
     if _is_frozen() and hasattr(sys, "_MEIPASS"):
         return str(getattr(sys, "_MEIPASS"))
     return os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +46,10 @@ def _run_sc_query(service_name: str) -> Tuple[bool, str]:
 
 
 def is_vigem_installed() -> bool:
-    # ViGEmBus 服务名通常为 ViGEmBus
+    # 查 ViGEmBus 服务是否装了
+    # （调试模式下总是返回 False）
+    if _TEST_MODE:
+        return False
     ok, _ = _run_sc_query("ViGEmBus")
     return ok
 
@@ -61,11 +71,11 @@ def _find_exe_by_keywords(folder: str, keywords: List[str]) -> Optional[str]:
 
 
 def _find_vigem_installer(folder: str) -> Optional[str]:
-    # 优先找名字包含 "vigem" 的 exe
+    # 先找包含 vigem 的 exe
     path = _find_exe_by_keywords(folder, ["vigem"])
     if path:
         return path
-    # 兜底：如果只有一个 exe，就用它
+    # 只有一个 exe 就用它
     exes = [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith(".exe")] if os.path.isdir(folder) else []
     exes = [p for p in exes if os.path.isfile(p)]
     if len(exes) == 1:
@@ -81,13 +91,10 @@ def _is_admin() -> bool:
 
 
 def _elevate_and_run(exe_path: str, args: Optional[List[str]] = None) -> int:
-    """
-    用 UAC 提权运行安装器。返回值是 ShellExecuteW 的结果（>32 表示成功启动）。
-    """
+    # UAC 提权跑 exe，>32 表示成功
     if args is None:
         args = []
     params = " ".join([_quote(a) for a in args])
-    # 0: HWND
     ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, params, None, 1)
     return int(ret)
 
@@ -101,17 +108,13 @@ def _quote(s: str) -> str:
 
 
 def _msgbox(title: str, message: str, kind: str = "info") -> None:
-    # 避免你项目不想引入额外 GUI 库，这里用 tkinter 自带消息框
+    # 用 tk 自带的 msgbox，没 GUI 就控制台输出
     try:
         import tkinter as tk
         from tkinter import messagebox
 
         root = tk.Tk()
         root.withdraw()
-        if kind == "askyesno":
-            # 返回由调用者处理
-            root.destroy()
-            return
         if kind == "error":
             messagebox.showerror(title, message)
         elif kind == "warning":
@@ -120,7 +123,6 @@ def _msgbox(title: str, message: str, kind: str = "info") -> None:
             messagebox.showinfo(title, message)
         root.destroy()
     except Exception:
-        # 如果消息框失败，就退化为控制台输出
         print(f"[{title}] {message}")
 
 
@@ -135,16 +137,13 @@ def _ask_yes_no(title: str, message: str) -> bool:
         root.destroy()
         return bool(ok)
     except Exception:
-        # 无 GUI 就默认否，避免误安装
+        # 没 GUI 默认不装
         print(f"[{title}] {message}")
         return False
 
 
 def ensure_prereqs_or_exit() -> None:
-    """
-    检查 ViGEmBus。未安装则引导安装（会申请管理员权限）。
-    - 安装器启动后，提示用户安装完成再重新打开程序（更稳）
-    """
+    # 检查 ViGEmBus，没有就走安装流程
     prereqs = _prereqs_dir()
 
     if is_vigem_installed():

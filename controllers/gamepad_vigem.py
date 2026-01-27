@@ -1,15 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-ViGEm 虚拟手柄封装
-作者署名：哔哩哔哩：刘云耀
-
-目标：
-- UI 层传入摇杆：-1..1（y>0 表示“向上”）
-- DS4 底层通常是 y>0 表示“向下”，因此 DS4 需要把 y 取反
-- X360 保持不反向（常见与 UI 一致）
-- 一创建就回中；异常时也回中，避免“失控拉满”
+ViGEm 虚拟手柄封装，支持 DS4 和 Xbox360
+- UI 传 -1..1（y>0 向上）
+- DS4 y 需反转（底层 y>0 向下）
+- Xbox360 不反转
+- 初始化和异常时都回中（防止摇杆卡死）
 - keepalive 只点按钮，不动摇杆
-- 支持：按住按钮 / 扳机（用于测试期间长按，例如开镜 L2/LT）
+- 支持按住按钮/扳机（长按）
 """
 
 from __future__ import annotations
@@ -33,19 +30,19 @@ def _clamp01(v: float) -> float:
 
 
 def _to_short(x: float) -> int:
-    # -1..1 -> -32767..32767
+    # 转 -32767..32767
     x = _clamp(x)
     return int(round(x * 32767))
 
 
 def _to_byte_0_255_from_minus1_1(x: float) -> int:
-    # -1..1 -> 0..255 （某些 DS4 接口用这个）
+    # 转 0..255（某些 DS4 用这个）
     x = _clamp(x)
     return int(round((x + 1.0) * 0.5 * 255))
 
 
 def _to_byte_0_255_from_0_1(x: float) -> int:
-    # 0..1 -> 0..255
+    # 转 0..255
     x = _clamp01(x)
     return int(round(x * 255))
 
@@ -61,7 +58,7 @@ class VirtualGamepad:
             kind = "ds4"
         self.kind = kind
 
-        # 关键：DS4 需要反转Y（因为很多 DS4 虚拟接口 y 正方向是向下）
+        # DS4 需要反转 Y（底层 y 反向）
         self.ds4_invert_y = (self.kind == "ds4")
 
         if self.kind == "xbox360":
@@ -74,15 +71,12 @@ class VirtualGamepad:
         self._held_l2 = 0
         self._held_r2 = 0
 
-        # 一创建就回中，防止默认残值/失控
+        # 初始化时回中
         self.neutral()
 
-    # ----------------- 摇杆 -----------------
+    # -----摇杆-----
     def set_sticks(self, lx: float, ly: float, rx: float, ry: float):
-        """
-        UI 层传入：-1..1，且 y>0 表示“向上”
-        DS4：写入前把 y 取反
-        """
+        # 收到 -1..1（y>0 向上），DS4 需反转 y
         lx = _clamp(lx)
         ly = _clamp(ly)
         rx = _clamp(rx)
@@ -98,12 +92,12 @@ class VirtualGamepad:
                 self.pad.right_joystick(x_value=_to_short(rx), y_value=_to_short(ry))
                 self.pad.update()
             else:
-                # 优先使用 float 接口（更不容易出范围问题）
+                # 优先用 float 接口（更稳）
                 if hasattr(self.pad, "left_joystick_float"):
                     self.pad.left_joystick_float(x_value_float=lx, y_value_float=ly)
                     self.pad.right_joystick_float(x_value_float=rx, y_value_float=ry)
                 else:
-                    # 兼容旧版：0..255
+                    # 兼容旧版用 0..255
                     self.pad.left_joystick(
                         x_value=_to_byte_0_255_from_minus1_1(lx),
                         y_value=_to_byte_0_255_from_minus1_1(ly),
@@ -114,12 +108,12 @@ class VirtualGamepad:
                     )
                 self.pad.update()
         except Exception:
-            # 任何异常：立刻回中，避免卡角落
+            # 异常就回中，防止摇杆失控
             self.neutral()
 
     def neutral(self):
         try:
-            # 同时释放“长按”状态（按钮+扳机）
+            # 释放长按状态（按钮+扳机）
             self.release_hold()
 
             if self.kind == "xbox360":
@@ -143,13 +137,11 @@ class VirtualGamepad:
         except Exception:
             pass
 
-    # ----------------- keepalive：只点按钮，不动摇杆 -----------------
+    # -----keepalive: 点按钮不动摇杆-----
     def tap_keepalive_button(self, btn_code: str, ms: int = 30):
-        """
-        btn_code:
-          DS4: square/cross/circle/triangle/l1/r1/share/options
-          X360: a/b/x/y/lb/rb/back/start
-        """
+        # DS4/X360 按钮列表
+        # DS4: square/cross/circle/triangle/l1/r1/share/options
+        # X360: a/b/x/y/lb/rb/back/start
         btn_code = (btn_code or "").lower().strip()
         ms = int(ms or 30)
         ms = max(10, min(200, ms))
@@ -194,14 +186,11 @@ class VirtualGamepad:
         except Exception:
             pass
 
-    # ----------------- 长按：按钮 / 扳机 -----------------
+    # -----长按: 按钮/扳机-----
     def hold_button(self, btn_code: str, pressed: bool):
-        """
-        持续按住某个“按钮”（不是扳机）
-        btn_code:
-          DS4: square/cross/circle/triangle/l1/r1/share/options
-          X360: a/b/x/y/lb/rb/back/start
-        """
+        # 持续按住某个按钮（不是扳机）
+        # DS4: square/cross/circle/triangle/l1/r1/share/options
+        # X360: a/b/x/y/lb/rb/back/start
         btn_code = (btn_code or "").lower().strip()
         pressed = bool(pressed)
 
@@ -267,10 +256,7 @@ class VirtualGamepad:
         self._held_btn_pressed = pressed
 
     def hold_triggers(self, l2: float = 0.0, r2: float = 0.0):
-        """
-        持续按住扳机（模拟量）
-        l2/r2: 0..1
-        """
+        # 持续按住扳机（0..1）
         l2b = _to_byte_0_255_from_0_1(l2)
         r2b = _to_byte_0_255_from_0_1(r2)
 

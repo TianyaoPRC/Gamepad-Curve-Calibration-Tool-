@@ -16,14 +16,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from controllers.gamepad_vigem import VirtualGamepad
+from i18n import init_i18n, get_i18n, T
 
 
-# ================== App Meta ==================
-APP_VERSION = "v1.6beta"
-APP_TITLE = f"游戏摇杆曲线探测器 {APP_VERSION}  |  哔哩哔哩：刘云耀"
+# ===== App Meta =====
+APP_VERSION = "v1.8.2"
+APP_NAME = "游戏摇杆曲线探测器"
+APP_AUTHOR = "刘云耀"
+APP_TITLE = f"{APP_NAME} {APP_VERSION}  |  哔哩哔哩：{APP_AUTHOR}"
 
 
-# ===== Matplotlib 中文支持 =====
+# ===== Matplotlib 中文 =====
 plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial Unicode MS"]
 plt.rcParams["axes.unicode_minus"] = False
 
@@ -31,16 +34,14 @@ plt.rcParams["axes.unicode_minus"] = False
 def clamp(v, lo=-1.0, hi=1.0):
     try:
         v = float(v)
-    except Exception:
+    except (ValueError, TypeError):
+        # 无效的数值，返回默认值 0.0
         return 0.0
     return max(lo, min(hi, v))
 
 
 def tk_event_to_hotkey(event: tk.Event):
-    """
-    Tk 捕获按键，返回“键名模式”的 key name（给 keyboard.add_hotkey 用）
-    注意：Tk 的 event.keycode 不是 keyboard 的 scan_code。
-    """
+    # Tk 捕获按键，返回“键名模式”的 key name（给 keyboard.add_hotkey 用）
     ks = event.keysym
     if ks.startswith("F") and ks[1:].isdigit():
         return ks.lower()  # keyboard 更偏好小写 "f6"
@@ -73,14 +74,14 @@ def tk_event_to_hotkey(event: tk.Event):
 
     ch = (event.char or "").strip()
     if ch:
-        # 允许单字符（字母/数字/符号）在 UI 中显示；具体能否用于当前后端由后端决定
+        # 单字符也允许
         return ch.lower()
 
     return ks.lower()
 
 
 def pav_isotonic_increasing(y):
-    """单调回归：强制 y 随 x 单调不减"""
+    # 单调回归
     n = len(y)
     blocks = [(y[i], 1, i, i) for i in range(n)]
     i = 0
@@ -104,7 +105,7 @@ def pav_isotonic_increasing(y):
 
 
 class _StreamToLogger:
-    """把 print()/traceback 输出重定向进 logger"""
+    # print -> logger
 
     def __init__(self, logger, level):
         self.logger = logger
@@ -121,20 +122,22 @@ class _StreamToLogger:
             if line:
                 try:
                     self.logger.log(self.level, f"[STD] {line}")
-                except Exception:
+                except (IOError, ValueError):
+                    # 日志写入失败，静默处理避免递归
                     pass
 
     def flush(self):
         if self._buf.strip():
             try:
                 self.logger.log(self.level, f"[STD] {self._buf.strip()}")
-            except Exception:
+            except (IOError, ValueError):
+                # 日志写入失败，静默处理
                 pass
         self._buf = ""
 
 
 class VirtualStick(tk.Canvas):
-    """鼠标拖动的虚拟摇杆（仅做 UI 展示与输出）"""
+    # 虚拟摇杆
 
     def __init__(self, master, size=360, deadzone=0.0, **kwargs):
         super().__init__(master, width=size, height=size, bg="#1e1e1e", highlightthickness=0, **kwargs)
@@ -209,7 +212,7 @@ class VirtualStick(tk.Canvas):
 
 
 class ScrollableFrame(ttk.Frame):
-    """右侧滚动区域"""
+    # 右侧滚动
 
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
@@ -241,17 +244,20 @@ class ScrollableFrame(ttk.Frame):
 
 
 class App(tk.Tk):
-    """
-    ✅ 已落实的3项改动：
-      1) 日志不再在 reset_test / finish_and_save 提前 stop（保证后续也有日志）
-      2) 键名注册失败 -> 自动切 scan 时，UI 文案不再误导为“检测到数字/符号键”
-      3) 打包 spec 的 hiddenimports 在 spec 文件里改（见 stick_calibrator.spec）
-    """
+    # ✅ 已落实的3项改动：
 
     def __init__(self):
         super().__init__()
 
-        # ===== 日志（启动即记录，直到 on_close 才停止）=====
+        # ===== 国际化 =====
+        # i18n 已由 launcher.py 初始化，这里直接获取实例
+        self.i18n = get_i18n()
+        # Get initial language name from i18n
+        available_langs = self.i18n.get_available_languages()
+        initial_lang_name = available_langs.get("zh_CN", "中文（简体）")
+        self.current_language_name = tk.StringVar(value=initial_lang_name)
+
+        # ===== 日志 =====
         self.logger = None
         self.log_path = None
         self._log_active = False
@@ -266,7 +272,7 @@ class App(tk.Tk):
         self.minsize(980, 660)
         self.resizable(True, True)
 
-        # ===== 手柄模拟总开关 =====
+        # ===== 手柄模拟 =====
         self.emu_enabled = False
         self.gamepad_type = tk.StringVar(value="ds4")
         self.gamepad = None
@@ -293,27 +299,28 @@ class App(tk.Tk):
         # keepalive（高频按按钮，防游戏切回键鼠）
         self.keepalive_enabled = tk.BooleanVar(value=True)
         self.keepalive_interval_ms = tk.IntVar(value=120)
-        self.keepalive_btn_name = tk.StringVar(value="方块/ X")
+        self.keepalive_btn_name = tk.StringVar(value=self.i18n.get("ui.button_square"))
         self._keepalive_last = 0.0
 
-        # ===== 测试期间长按按键（默认关闭）=====
+        # ===== 长按 =====
         self.hold_enabled = tk.BooleanVar(value=False)
-        self.hold_key_name = tk.StringVar(value="左扳机（L2/ LT）")
+        self.hold_key_name = tk.StringVar(value=self.i18n.get("ui.trigger_l2"))
         self._hold_applied = False
 
-        # ===== 热键后端 =====
+        # ===== 热键 =====
         self.hotkey_backend = tk.StringVar(value="keyboard_name")
         self._scan_hook_installed = False
 
         # 兼容性提示（显示在 UI 内，不弹窗）
         self.hotkey_compat_hint = tk.StringVar(value="")
 
-        # ===== 热键（保存两份：name / scan_code）=====
+        # ===== 热键 =====
         self.start_key = "f6"
         self.record_key = "f9"
         self.deadzone_key = "f10"
         self.deadzone_back_key = "f11"
         self.end_deadzone_key = "f12"
+        self.retry_last_key = "f7"
 
         # scan_code 版（None 表示未设置）
         self.start_scan = None
@@ -321,6 +328,7 @@ class App(tk.Tk):
         self.deadzone_scan = None
         self.deadzone_back_scan = None
         self.end_deadzone_scan = None
+        self.retry_last_scan = None
 
         # keyboard.add_hotkey 返回的 handle
         self.hotkey_start = None
@@ -328,6 +336,7 @@ class App(tk.Tk):
         self.hotkey_deadzone = None
         self.hotkey_deadzone_back = None
         self.hotkey_end_deadzone = None
+        self.hotkey_retry_last = None
 
         # 热键捕获模式
         self.capture_mode = None
@@ -350,14 +359,14 @@ class App(tk.Tk):
 
         self.allow_adjust_after_deadzone = True
 
-        # ===== 运行锁 / 热键防抖 =====
+        # ===== 热键 =====
         self._start_guard_lock = threading.Lock()
         self._test_running = False  # 硬锁：测试进行中禁止 start_test 重入
         self._hotkey_cooldown_ms = 250
         self._hotkey_last_ts = {}  # name -> perf_counter()
 
         # ===== UI =====
-        self.status = tk.StringVar(value="提示：先点击【开启模拟手柄】。")
+        self.status = tk.StringVar(value=self.i18n.get("messages.initial_hint"))
         self.left_stick = None
         self.right_stick = None
         self.lbl_status = None
@@ -375,7 +384,7 @@ class App(tk.Tk):
         self.out_thread = threading.Thread(target=self._output_loop, daemon=True)
         self.out_thread.start()
 
-        # Tk 捕获（仅用于键名模式的“按键设置”；scan 模式用 keyboard.read_event 捕获）
+        # Tk 捕获（键名模式用）”；scan 模式用 keyboard.read_event 捕获）
         self.bind_all("<Key>", self._on_any_key)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -387,7 +396,17 @@ class App(tk.Tk):
         self._register_hotkeys()
         self._log("App init done.")
 
-    # ================= 日志 =================
+    # ===== 日志 =====
+    def _get_app_base_dir_early(self) -> str:
+        """在日志初始化前调用，获取基础目录"""
+        try:
+            if getattr(sys, "frozen", False):
+                return os.path.dirname(sys.executable)
+            else:
+                return os.getcwd()
+        except Exception:
+            return os.getcwd()
+
     def _get_app_base_dir(self) -> str:
         try:
             if getattr(sys, "frozen", False):
@@ -439,8 +458,9 @@ class App(tk.Tk):
 
         except Exception as e:
             try:
-                messagebox.showwarning("日志初始化失败", str(e))
-            except Exception:
+                messagebox.showwarning(self.i18n.get("hints.log_init_failed_title"), str(e))
+            except (RuntimeError, tk.TclError):
+                # Tkinter 弹窗失败，无法通知用户
                 pass
 
     def _log_header(self):
@@ -455,9 +475,9 @@ class App(tk.Tk):
         self.logger.info(f"python={sys.version.replace(os.linesep, ' ')}")
         self.logger.info(f"log_path={self.log_path}")
 
-        # 用户可读提示（只写一次）
-        self.logger.info("[HINT] 这份日志给普通用户看的：遇到问题可先看包含 [CAUSE]/[ACTION] 的几行。")
-        self.logger.info("[HINT] 重点关键词：HOTKEY / enable_emulation / start_test / record / finish_and_save。")
+        # 用户提示（仅一次））
+        self.logger.info(f"[HINT] {self.i18n.get('hints.log_header_msg1')}")
+        self.logger.info(f"[HINT] {self.i18n.get('hints.log_header_msg2')}")
 
     def _log_write_permissions_check(self):
         if not self.logger or not self.log_path:
@@ -472,9 +492,9 @@ class App(tk.Tk):
         except Exception:
             self.logger.exception("[WRITE_TEST] FAILED (目录不可写/被拦截)")
             self._log_user_hint(
-                title="日志目录不可写",
-                cause="多半是系统权限/杀软拦截/路径不可写（用户环境问题）",
-                action="建议把程序放到非系统盘的普通文件夹，或以管理员运行；或关闭拦截后再试。",
+                title=self.i18n.get("hints.log_write_failed_title"),
+                cause=self.i18n.get("hints.log_write_failed_cause"),
+                action=self.i18n.get("hints.log_write_failed_action"),
                 who="USER_ENV",
             )
 
@@ -520,23 +540,17 @@ class App(tk.Tk):
             pass
 
     def _log_user_hint(self, title: str, cause: str, action: str, who: str = "UNKNOWN"):
-        """
-        who:
-          - USER_OP:   更像用户操作/设置导致
-          - USER_ENV:  更像系统环境/权限/杀软/驱动
-          - BUG:       更像代码 bug
-          - UNKNOWN:   不确定
-        """
+        # who:
         self._log(f"[HINT] {title}")
         self._log(f"[CAUSE] ({who}) {cause}")
         self._log(f"[ACTION] {action}")
 
-    # ================= 热键：统一日志/防抖 =================
+    # ===== 日志 =====
     def _now(self) -> float:
         return time.perf_counter()
 
     def _hotkey_debounced(self, name: str) -> bool:
-        """True=允许触发；False=本次忽略（防抖）"""
+        # True=允许触发；False=本次忽略（防抖）
         now = self._now()
         last = self._hotkey_last_ts.get(name, 0.0)
         if (now - last) * 1000.0 < float(self._hotkey_cooldown_ms):
@@ -582,11 +596,15 @@ class App(tk.Tk):
             return
         self.on_end_deadzone_key()
 
-    # ================= 热键后端：自动选择逻辑 =================
+    def _on_hotkey_retry_last(self):
+        self._hotkey_log("retry_last")
+        if not self._hotkey_debounced("retry_last"):
+            return
+        self.on_retry_last_key()
+
+    # ===== 热键 =====
     def _sanitize_hotkey_name(self, hk: str, fallback: str) -> str:
-        """
-        keyboard.add_hotkey 只吃键名，不吃 'scan code 5' 这种字符串；遇到就回退。
-        """
+        # keyboard.add_hotkey 只吃键名，不吃 'scan code 5' 这种字符串；遇到就回退。
         hk = (hk or "").strip()
         if not hk:
             return fallback
@@ -596,7 +614,7 @@ class App(tk.Tk):
         return hk.lower()
 
     def _is_symbol_or_digit_single_key(self, hk_name: str) -> bool:
-        """判断：是否为单字符数字/符号键（触发强制 scan 模式）"""
+        # 判断：是否为单字符数字/符号键（触发强制 scan 模式）
         hk_name = (hk_name or "").strip()
         if len(hk_name) != 1:
             return False
@@ -608,13 +626,10 @@ class App(tk.Tk):
         return False
 
     def _all_hotkey_names(self):
-        return [self.start_key, self.record_key, self.deadzone_key, self.deadzone_back_key, self.end_deadzone_key]
+        return [self.start_key, self.record_key, self.deadzone_key, self.deadzone_back_key, self.end_deadzone_key, self.retry_last_key]
 
     def _auto_select_backend(self, reason: str = ""):
-        """
-        - 只要任何热键绑定到数字/符号单字符 => keyboard_scan
-        - 当全部都不是数字/符号单字符 => 自动切回 keyboard_name
-        """
+        # - 只要任何热键绑定到数字/符号单字符 => keyboard_scan
         names = [((x or "").strip().lower()) for x in self._all_hotkey_names()]
         has_symbol_digit = any(self._is_symbol_or_digit_single_key(x) for x in names)
 
@@ -640,25 +655,18 @@ class App(tk.Tk):
             has_symbol_digit = any(self._is_symbol_or_digit_single_key(x) for x in names)
 
         if has_symbol_digit:
-            self.hotkey_compat_hint.set(
-                "检测到你绑定了【数字/符号键】（单字符）。\n"
-                "✅ 已自动使用：keyboard_scan（更适合全屏游戏/数字符号键）。\n"
-                "提示：把这些数字/符号键改成 F键/字母/方向键等后，会自动切回 keyboard_name。"
-            )
+            self.hotkey_compat_hint.set(self.i18n.get("ui.hotkey_hint_symbol"))
         else:
-            self.hotkey_compat_hint.set(
-                "当前热键不包含数字/符号键。\n"
-                "✅ 已自动使用：keyboard_name（更直观稳定，推荐 F键/字母）。\n"
-                "若你改绑为数字/符号键，会自动切到 keyboard_scan。"
-            )
+            self.hotkey_compat_hint.set(self.i18n.get("ui.hotkey_hint_normal"))
 
         if self.lbl_hotkey_hint is not None:
             try:
                 self.lbl_hotkey_hint.configure(textvariable=self.hotkey_compat_hint)
-            except Exception:
+            except (RuntimeError, tk.TclError):
+                # Tkinter 控件配置失败，继续执行
                 pass
 
-    # ================= 热键后端：hook/注册 =================
+    # ===== 热键 =====
     def _install_scan_hook(self):
         if self._scan_hook_installed:
             return
@@ -686,6 +694,9 @@ class App(tk.Tk):
                 if self.end_deadzone_scan is not None and sc == self.end_deadzone_scan:
                     self.after(0, self._on_hotkey_end_deadzone)
                     return
+                if self.retry_last_scan is not None and sc == self.retry_last_scan:
+                    self.after(0, self._on_hotkey_retry_last)
+                    return
             except Exception:
                 pass
 
@@ -700,6 +711,7 @@ class App(tk.Tk):
             self.hotkey_deadzone,
             self.hotkey_deadzone_back,
             self.hotkey_end_deadzone,
+            self.hotkey_retry_last,
         ]:
             if h is not None:
                 try:
@@ -711,9 +723,10 @@ class App(tk.Tk):
         self.hotkey_deadzone = None
         self.hotkey_deadzone_back = None
         self.hotkey_end_deadzone = None
+        self.hotkey_retry_last = None
 
     def _register_hotkeys(self):
-        # 测试进行中禁止重绑热键
+        # 测试中禁止改热键
         if self.is_armed or self._test_running or self.mode != "idle":
             self._log("register_hotkeys blocked: test is running", level="warning")
             self._log_user_hint(
@@ -735,73 +748,83 @@ class App(tk.Tk):
             self._install_scan_hook()
             return
 
-        # ===== 键名模式：keyboard.add_hotkey =====
+        # ===== 键名模式 =====
         start = self._sanitize_hotkey_name(self.start_key, "f6")
         record = self._sanitize_hotkey_name(self.record_key, "f9")
         dzp = self._sanitize_hotkey_name(self.deadzone_key, "f10")
         dzm = self._sanitize_hotkey_name(self.deadzone_back_key, "f11")
         dzend = self._sanitize_hotkey_name(self.end_deadzone_key, "f12")
+        retry = self._sanitize_hotkey_name(self.retry_last_key, "f7")
 
         self.start_key = start
         self.record_key = record
         self.deadzone_key = dzp
         self.deadzone_back_key = dzm
         self.end_deadzone_key = dzend
-        self.lbl_keys.configure(text=self._keys_text())
+        self.retry_last_key = retry
+        if self.lbl_keys is not None:
+            self.lbl_keys.configure(text=self._keys_text())
+
+        def _wrap(fn):
+            # keyboard 期望 callback 返回 None/bool，这里显式返回 None
+            def _inner():
+                self.after(0, fn)
+                return None
+
+            return _inner
 
         try:
             self.hotkey_start = keyboard.add_hotkey(
-                start, lambda: self.after(0, self._on_hotkey_start), trigger_on_release=True
+                start, _wrap(self._on_hotkey_start), trigger_on_release=True
             )
             self.hotkey_record = keyboard.add_hotkey(
-                record, lambda: self.after(0, self._on_hotkey_record), trigger_on_release=True
+                record, _wrap(self._on_hotkey_record), trigger_on_release=True
             )
             self.hotkey_deadzone = keyboard.add_hotkey(
-                dzp, lambda: self.after(0, self._on_hotkey_deadzone), trigger_on_release=True
+                dzp, _wrap(self._on_hotkey_deadzone), trigger_on_release=True
             )
             self.hotkey_deadzone_back = keyboard.add_hotkey(
-                dzm, lambda: self.after(0, self._on_hotkey_deadzone_back), trigger_on_release=True
+                dzm, _wrap(self._on_hotkey_deadzone_back), trigger_on_release=True
             )
             self.hotkey_end_deadzone = keyboard.add_hotkey(
-                dzend, lambda: self.after(0, self._on_hotkey_end_deadzone), trigger_on_release=True
+                dzend, _wrap(self._on_hotkey_end_deadzone), trigger_on_release=True
+            )
+            self.hotkey_retry_last = keyboard.add_hotkey(
+                retry, _wrap(self._on_hotkey_retry_last), trigger_on_release=True
             )
         except Exception as e:
-            # 不允许异常炸穿
+            # 异常要兜底
             self._log(f"register_hotkeys FAILED: {repr(e)}", level="error")
             self._log_user_hint(
-                title="热键注册失败（键名模式）",
-                cause="通常是全屏游戏环境/权限/杀软拦截/某些键名不被识别（偏环境问题）",
-                action="程序会自动切到 keyboard_scan；建议优先绑定 F键/字母，必要时以管理员运行或关闭拦截。",
+                title=self.i18n.get("hints.hotkey_capture_fail_title"),
+                cause=self.i18n.get("hints.hotkey_capture_fail_cause"),
+                action=self.i18n.get("hints.hotkey_capture_fail_action"),
                 who="USER_ENV",
             )
 
-            # 自动切 scan 兜底（✅ 不再误导为“检测到数字/符号键”）
+            # 自动切 scan
             self.hotkey_backend.set("keyboard_scan")
             self._install_scan_hook()
 
-            self.hotkey_compat_hint.set(
-                "⚠️ 键名模式热键注册失败，已自动切换到 keyboard_scan。\n"
-                "可能原因：全屏游戏/权限不足/杀软拦截/某些键名不被 keyboard 识别。\n"
-                "建议：优先绑定 F键/字母；必要时以管理员运行或关闭拦截。"
-            )
+            self.hotkey_compat_hint.set(self.i18n.get("ui.hotkey_hint_failed"))
             if self.lbl_hotkey_hint is not None:
                 try:
                     self.lbl_hotkey_hint.configure(textvariable=self.hotkey_compat_hint)
                 except Exception:
                     pass
 
-            self.status.set("⚠️ 键名模式注册失败，已自动切换到 keyboard_scan（详情见日志）。")
+            self.status.set(self.i18n.get("messages.hotkey_registration_failed"))
 
     def _on_hotkey_backend_changed(self, _event=None):
         if self.is_armed or self._test_running or self.mode != "idle":
-            self.status.set("⚠️ 测试进行中，禁止切换热键模式（请先停止/重置）。")
+            self.status.set(self.i18n.get("messages.hotkey_mode_forbidden"))
             return
 
         self._auto_select_backend(reason="user_changed_backend")
         self._register_hotkeys()
-        self.status.set(f"✅ 热键模式：{self.hotkey_backend.get()}（按绑定按键自动适配）")
+        self.status.set(self.i18n.get("messages.hotkey_mode_changed").format(mode=self.hotkey_backend.get()))
 
-    # ================= UI =================
+    # ===== UI =====
     def _build_ui(self):
         root = ttk.Frame(self, padding=10)
         root.pack(fill="both", expand=True)
@@ -815,15 +838,15 @@ class App(tk.Tk):
         left.columnconfigure(1, weight=1)
         left.rowconfigure(2, weight=1)
 
-        ttk.Label(left, text="左摇杆（鼠标拖动）", font=("Microsoft YaHei", 10, "bold")).grid(row=0, column=0, pady=(0, 6))
-        ttk.Label(left, text="右摇杆（鼠标拖动）", font=("Microsoft YaHei", 10, "bold")).grid(row=0, column=1, pady=(0, 6))
+        ttk.Label(left, text=self.i18n.get("ui.left_stick"), font=("Microsoft YaHei", 10, "bold")).grid(row=0, column=0, pady=(0, 6))
+        ttk.Label(left, text=self.i18n.get("ui.right_stick"), font=("Microsoft YaHei", 10, "bold")).grid(row=0, column=1, pady=(0, 6))
 
         self.left_stick = VirtualStick(left, size=360)
         self.right_stick = VirtualStick(left, size=360)
         self.left_stick.grid(row=1, column=0, padx=8, pady=8, sticky="n")
         self.right_stick.grid(row=1, column=1, padx=8, pady=8, sticky="n")
 
-        info = ttk.LabelFrame(left, text="状态 / 操作流程")
+        info = ttk.LabelFrame(left, text=self.i18n.get("ui.info_title"))
         info.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=(10, 0))
         info.columnconfigure(0, weight=1)
         info.rowconfigure(1, weight=1)
@@ -835,23 +858,7 @@ class App(tk.Tk):
             info,
             justify="left",
             foreground="#333",
-            text=(
-                "用途：测量“游戏对手柄做的输入优化曲线”（不是硬件死区）。\n\n"
-                "操作流程：\n"
-                "  1) 点击【开启模拟手柄】后，切回游戏。\n"
-                "  2) 点击【开始测试】（或按开始键）。程序进入死区探测。\n"
-                "  3) 死区探测：\n"
-                "     - 视角不动：按【死区探测键】增加幅值。\n"
-                "     - 动得过快：按【回退死区键】回退（可回到 0）。\n"
-                "     - 视角开始缓慢移动：按【结束死区键】确认死区并进入曲线采样。\n"
-                "  4) 曲线采样：\n"
-                "     - 按【记录键】一次开始计时。\n"
-                "     - 转满一圈后再按【记录键】一次结束并保存。\n"
-                "  5) 完成后自动输出：曲线图、反曲线图、带坐标版本、CSV。\n\n"
-                "热键提示：软件必须在后台运行（游戏在前台）。\n"
-                "  - 你绑定数字/符号键时，本软件会自动切到【扫描码模式】。\n"
-                "定位问题：程序会生成 logs/run_log_*.txt 详细日志（包含可读解释）。"
-            ),
+            text=self.i18n.get("ui.info_description"),
         )
         self.lbl_tip.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
@@ -860,134 +867,188 @@ class App(tk.Tk):
         right = right_scroll.inner
         right.columnconfigure(0, weight=1)
 
-        ttk.Label(right, text="设置面板", font=("Microsoft YaHei", 11, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 10), padx=6)
+        ttk.Label(right, text=self.i18n.get("ui.settings_panel"), font=("Microsoft YaHei", 11, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 10), padx=6)
 
-        padfrm = ttk.LabelFrame(right, text="虚拟手柄")
-        padfrm.grid(row=1, column=0, sticky="ew", pady=(0, 10), padx=6)
+        # ===== 语言选择 =====
+        lang_frm = ttk.LabelFrame(right, text=self.i18n.get("ui.language_select"))
+        lang_frm.grid(row=1, column=0, sticky="ew", pady=(0, 10), padx=6)
+        lang_frm.columnconfigure(0, weight=1)
+        
+        ttk.Label(lang_frm, text=self.i18n.get("ui.language_label")).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 2))
+        available_langs = self.i18n.get_available_languages()
+        lang_codes = sorted(available_langs.keys())
+        lang_names = [available_langs[code] for code in lang_codes]
+        
+        # 保存语言代码映射
+        self._lang_name_to_code = {available_langs[code]: code for code in lang_codes}
+        self._lang_code_to_name = {code: available_langs[code] for code in lang_codes}
+        
+        self.cmb_language = ttk.Combobox(
+            lang_frm, 
+            values=lang_names, 
+            state="readonly", 
+            width=25,
+            textvariable=self.current_language_name
+        )
+        self.cmb_language.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
+        
+        # 获取当前语言代码并设置下拉框初始选择
+        current_lang_code = self.i18n.current_lang
+        current_lang_name = self._lang_code_to_name.get(current_lang_code, available_langs.get("zh_CN", "中文（简体）"))
+        self.current_language_name.set(current_lang_name)
+        if current_lang_code in lang_codes:
+            self.cmb_language.current(lang_codes.index(current_lang_code))
+        else:
+            self.cmb_language.current(0)
+        
+        self.cmb_language.bind("<<ComboboxSelected>>", lambda e: self._on_language_changed(lang_codes))
+
+        padfrm = ttk.LabelFrame(right, text=self.i18n.get("ui.gamepad"))
+        padfrm.grid(row=2, column=0, sticky="ew", pady=(0, 10), padx=6)
         padfrm.columnconfigure(0, weight=1)
 
-        ttk.Label(padfrm, text="模拟类型：").grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+        ttk.Label(padfrm, text=self.i18n.get("ui.gamepad_type")).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
         self.cmb_pad = ttk.Combobox(padfrm, values=["ds4", "xbox360"], state="readonly", width=18, textvariable=self.gamepad_type)
         self.cmb_pad.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 6))
 
         btnrow = ttk.Frame(padfrm)
         btnrow.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
-        ttk.Button(btnrow, text="开启模拟手柄", command=self.enable_emulation).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(btnrow, text="回中（不重启设备）", command=self.neutral_only).grid(row=0, column=1)
+        ttk.Button(btnrow, text=self.i18n.get("ui.enable_emulation"), command=self.enable_emulation).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(btnrow, text=self.i18n.get("ui.neutral"), command=self.neutral_only).grid(row=0, column=1)
 
-        self.lbl_emu = ttk.Label(padfrm, text="状态：未开启", foreground="#aa0000")
+        self.lbl_emu = ttk.Label(padfrm, text=self.i18n.get("ui.status") + self.i18n.get("ui.status_disabled"), foreground="#aa0000")
         self.lbl_emu.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 8))
 
-        frm = ttk.LabelFrame(right, text="测试参数")
-        frm.grid(row=2, column=0, sticky="ew", pady=(0, 10), padx=6)
+        frm = ttk.LabelFrame(right, text=self.i18n.get("ui.test_params"))
+        frm.grid(row=3, column=0, sticky="ew", pady=(0, 10), padx=6)
         frm.columnconfigure(0, weight=1)
 
-        ttk.Label(frm, text="采样点数量（2~10：指需要测量的点数，不含第1固定点）：").grid(row=0, column=0, sticky="w", padx=8, pady=(8, 2))
+        ttk.Label(frm, text=self.i18n.get("ui.sample_count")).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 2))
         ttk.Entry(frm, width=10, textvariable=self.sample_count).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
 
-        ttk.Label(frm, text="每个采样点记录次数：").grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
+        ttk.Label(frm, text=self.i18n.get("ui.repeats_per_mag")).grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
         ttk.Spinbox(frm, from_=1, to=50, width=10, textvariable=self.repeats_per_mag).grid(row=3, column=0, sticky="w", padx=8, pady=(0, 8))
 
-        ttk.Label(frm, text="幅值范围（用于“非死区”起点到最大）：").grid(row=4, column=0, sticky="w", padx=8, pady=(0, 2))
+        ttk.Label(frm, text=self.i18n.get("ui.magnitude_range")).grid(row=4, column=0, sticky="w", padx=8, pady=(0, 2))
         rng = ttk.Frame(frm)
         rng.grid(row=5, column=0, sticky="w", padx=8, pady=(0, 8))
-        ttk.Label(rng, text="MIN").grid(row=0, column=0, padx=(0, 6))
+        ttk.Label(rng, text=self.i18n.get("ui.min")).grid(row=0, column=0, padx=(0, 6))
         ttk.Entry(rng, width=8, textvariable=self.min_mag).grid(row=0, column=1)
-        ttk.Label(rng, text="MAX").grid(row=0, column=2, padx=(12, 6))
+        ttk.Label(rng, text=self.i18n.get("ui.max")).grid(row=0, column=2, padx=(12, 6))
         ttk.Entry(rng, width=8, textvariable=self.max_mag).grid(row=0, column=3)
 
-        ttk.Label(frm, text="测试方向（固定推右摇杆）：").grid(row=6, column=0, sticky="w", padx=8, pady=(0, 2))
+        ttk.Label(frm, text=self.i18n.get("ui.test_direction")).grid(row=6, column=0, sticky="w", padx=8, pady=(0, 2))
         dirfrm = ttk.Frame(frm)
         dirfrm.grid(row=7, column=0, sticky="w", padx=8, pady=(0, 8))
-        for i, d in enumerate(["right", "left", "up", "down"]):
-            ttk.Radiobutton(dirfrm, text=d, value=d, variable=self.direction).grid(row=0, column=i, padx=6)
+        direction_labels = {
+            "right": self.i18n.get("ui.direction_right"),
+            "left": self.i18n.get("ui.direction_left"),
+            "up": self.i18n.get("ui.direction_up"),
+            "down": self.i18n.get("ui.direction_down")
+        }
+        for i, (val, label) in enumerate([("right", direction_labels["right"]), 
+                                           ("left", direction_labels["left"]), 
+                                           ("up", direction_labels["up"]), 
+                                           ("down", direction_labels["down"])]):
+            ttk.Radiobutton(dirfrm, text=label, value=val, variable=self.direction).grid(row=0, column=i, padx=6)
 
-        dzfrm = ttk.LabelFrame(right, text="死区探测参数")
-        dzfrm.grid(row=3, column=0, sticky="ew", pady=(0, 10), padx=6)
+        dzfrm = ttk.LabelFrame(right, text=self.i18n.get("ui.deadzone_params"))
+        dzfrm.grid(row=4, column=0, sticky="ew", pady=(0, 10), padx=6)
         dzfrm.columnconfigure(0, weight=1)
-        ttk.Label(dzfrm, text="探测步长（仍不动时使用）：").grid(row=0, column=0, sticky="w", padx=8, pady=(8, 2))
+        ttk.Label(dzfrm, text=self.i18n.get("ui.deadzone_step")).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 2))
         ttk.Entry(dzfrm, width=10, textvariable=self.deadzone_step).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 6))
-        ttk.Label(dzfrm, text="回退步长（动得过快时使用，可回到 0）：").grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
+        ttk.Label(dzfrm, text=self.i18n.get("ui.deadzone_back_step")).grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
         ttk.Entry(dzfrm, width=10, textvariable=self.deadzone_back_step).grid(row=3, column=0, sticky="w", padx=8, pady=(0, 8))
 
-        axfrm = ttk.LabelFrame(right, text="曲线显示坐标（例如 0~100 / 0~350）")
-        axfrm.grid(row=4, column=0, sticky="ew", pady=(0, 10), padx=6)
+        axfrm = ttk.LabelFrame(right, text=self.i18n.get("ui.axis_config"))
+        axfrm.grid(row=5, column=0, sticky="ew", pady=(0, 10), padx=6)
         axfrm.columnconfigure(0, weight=1)
         rowa = ttk.Frame(axfrm)
         rowa.grid(row=0, column=0, sticky="w", padx=8, pady=(8, 8))
-        ttk.Label(rowa, text="X轴最大值：").grid(row=0, column=0, padx=(0, 6))
+        ttk.Label(rowa, text=self.i18n.get("ui.x_axis_max")).grid(row=0, column=0, padx=(0, 6))
         ttk.Entry(rowa, width=10, textvariable=self.x_axis_max).grid(row=0, column=1)
-        ttk.Label(rowa, text="Y轴最大值：").grid(row=0, column=2, padx=(12, 6))
+        ttk.Label(rowa, text=self.i18n.get("ui.y_axis_max")).grid(row=0, column=2, padx=(12, 6))
         ttk.Entry(rowa, width=10, textvariable=self.y_axis_max).grid(row=0, column=3)
 
-        kfrm = ttk.LabelFrame(right, text="保持手柄输入（防游戏切回键鼠）")
-        kfrm.grid(row=5, column=0, sticky="ew", pady=(0, 10), padx=6)
+        kfrm = ttk.LabelFrame(right, text=self.i18n.get("ui.keepalive"))
+        kfrm.grid(row=6, column=0, sticky="ew", pady=(0, 10), padx=6)
         kfrm.columnconfigure(0, weight=1)
 
         ttk.Checkbutton(
             kfrm,
-            text="启用（死区探测与计时等待期间会周期性点按一个手柄按键）",
+            text=self.i18n.get("ui.keepalive_enable"),
             variable=self.keepalive_enabled,
         ).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
 
         rowk = ttk.Frame(kfrm)
         rowk.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
-        ttk.Label(rowk, text="间隔(ms)：").grid(row=0, column=0, padx=(0, 6))
+        ttk.Label(rowk, text=self.i18n.get("ui.keepalive_interval")).grid(row=0, column=0, padx=(0, 6))
         ttk.Entry(rowk, width=8, textvariable=self.keepalive_interval_ms).grid(row=0, column=1)
 
-        ttk.Label(rowk, text="按键：").grid(row=0, column=2, padx=(12, 6))
+        ttk.Label(rowk, text=self.i18n.get("ui.keepalive_button")).grid(row=0, column=2, padx=(12, 6))
+        keepalive_buttons = [
+            self.i18n.get("ui.button_square"),
+            self.i18n.get("ui.button_cross"),
+            self.i18n.get("ui.button_circle"),
+            self.i18n.get("ui.button_triangle"),
+            self.i18n.get("ui.button_l1"),
+            self.i18n.get("ui.button_r1"),
+            self.i18n.get("ui.button_share"),
+            self.i18n.get("ui.button_options"),
+        ]
         ttk.Combobox(
             rowk,
-            values=["方块/ X", "叉/ A", "圆/ B", "三角/ Y", "L1/ LB", "R1/ RB", "Share/ Back", "Options/ Start"],
+            values=keepalive_buttons,
             textvariable=self.keepalive_btn_name,
             width=14,
             state="readonly",
         ).grid(row=0, column=3)
 
-        hfrm = ttk.LabelFrame(right, text="测试期间长按按键（默认关闭）")
-        hfrm.grid(row=6, column=0, sticky="ew", pady=(0, 10), padx=6)
+        hfrm = ttk.LabelFrame(right, text=self.i18n.get("ui.hold"))
+        hfrm.grid(row=7, column=0, sticky="ew", pady=(0, 10), padx=6)
         hfrm.columnconfigure(0, weight=1)
 
-        ttk.Checkbutton(hfrm, text="启用（测试期间持续按住指定按键/扳机）", variable=self.hold_enabled).grid(
+        ttk.Checkbutton(hfrm, text=self.i18n.get("ui.hold_enable"), variable=self.hold_enabled).grid(
             row=0, column=0, sticky="w", padx=8, pady=(8, 4)
         )
 
         rowh = ttk.Frame(hfrm)
         rowh.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
-        ttk.Label(rowh, text="长按键：").grid(row=0, column=0, padx=(0, 6))
+        ttk.Label(rowh, text=self.i18n.get("ui.hold_key")).grid(row=0, column=0, padx=(0, 6))
+        hold_buttons = [
+            self.i18n.get("ui.trigger_l2"),
+            self.i18n.get("ui.trigger_r2"),
+            self.i18n.get("ui.button_l1"),
+            self.i18n.get("ui.button_r1"),
+            self.i18n.get("ui.button_square"),
+            self.i18n.get("ui.button_cross"),
+            self.i18n.get("ui.button_circle"),
+            self.i18n.get("ui.button_triangle"),
+        ]
         ttk.Combobox(
             rowh,
-            values=[
-                "左扳机（L2/ LT）",
-                "右扳机（R2/ RT）",
-                "L1/ LB",
-                "R1/ RB",
-                "方块/ X",
-                "叉/ A",
-                "圆/ B",
-                "三角/ Y",
-            ],
+            values=hold_buttons,
             textvariable=self.hold_key_name,
             width=16,
             state="readonly",
         ).grid(row=0, column=1)
 
-        # ===== 热键设置（将“热键模式”放在这里附近）=====
-        hot = ttk.LabelFrame(right, text="热键设置（点击按钮后按键）")
-        hot.grid(row=7, column=0, sticky="ew", pady=(0, 10), padx=6)
+        # ===== 热键 =====
+        hot = ttk.LabelFrame(right, text=self.i18n.get("ui.hotkey"))
+        hot.grid(row=8, column=0, sticky="ew", pady=(0, 10), padx=6)
         hot.columnconfigure(0, weight=1)
 
         hk_backend_frm = ttk.Frame(hot)
         hk_backend_frm.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 6))
         hk_backend_frm.columnconfigure(2, weight=1)
 
-        ttk.Label(hk_backend_frm, text="热键模式：").grid(row=0, column=0, sticky="w")
+        ttk.Label(hk_backend_frm, text=self.i18n.get("ui.hotkey_mode")).grid(row=0, column=0, sticky="w")
         self.cmb_hotkey_backend = ttk.Combobox(
             hk_backend_frm,
             values=["keyboard_name", "keyboard_scan"],
             textvariable=self.hotkey_backend,
             width=16,
-            state="readonly",
+            state="normal",
         )
         self.cmb_hotkey_backend.grid(row=0, column=1, sticky="w", padx=(8, 12))
         self.cmb_hotkey_backend.bind("<<ComboboxSelected>>", self._on_hotkey_backend_changed)
@@ -1005,49 +1066,66 @@ class App(tk.Tk):
         self.lbl_keys.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 6))
 
         btns = ttk.Frame(hot)
-        btns.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 8))
+        btns.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        btns.columnconfigure(0, weight=1)
+        btns.columnconfigure(1, weight=1)
+        btns.columnconfigure(2, weight=1)
 
         row1 = ttk.Frame(btns)
-        row1.grid(row=0, column=0, sticky="w")
-        ttk.Button(row1, text="设置开始键", command=self.capture_start_key).grid(row=0, column=0, padx=(0, 8), pady=(0, 6))
-        ttk.Button(row1, text="设置记录键", command=self.capture_record_key).grid(row=0, column=1, padx=(0, 8), pady=(0, 6))
-        ttk.Button(row1, text="设置死区探测键", command=self.capture_deadzone_key).grid(row=0, column=2, padx=(0, 8), pady=(0, 6))
+        row1.grid(row=0, column=0, sticky="ew", columnspan=3)
+        row1.columnconfigure(0, weight=1)
+        row1.columnconfigure(1, weight=1)
+        row1.columnconfigure(2, weight=1)
+        ttk.Button(row1, text=self.i18n.get("ui.set_start_key"), command=self.capture_start_key).grid(row=0, column=0, padx=(0, 4), pady=(0, 6), sticky="ew")
+        ttk.Button(row1, text=self.i18n.get("ui.set_record_key"), command=self.capture_record_key).grid(row=0, column=1, padx=(2, 2), pady=(0, 6), sticky="ew")
+        ttk.Button(row1, text=self.i18n.get("ui.set_deadzone_key"), command=self.capture_deadzone_key).grid(row=0, column=2, padx=(4, 0), pady=(0, 6), sticky="ew")
 
         row2 = ttk.Frame(btns)
-        row2.grid(row=1, column=0, sticky="w")
-        ttk.Button(row2, text="设置回退死区键", command=self.capture_deadzone_back_key).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(row2, text="设置结束死区键", command=self.capture_end_deadzone_key).grid(row=0, column=1)
+        row2.grid(row=1, column=0, sticky="ew", columnspan=3)
+        row2.columnconfigure(0, weight=1)
+        row2.columnconfigure(1, weight=1)
+        row2.columnconfigure(2, weight=1)
+        ttk.Button(row2, text=self.i18n.get("ui.set_deadzone_back_key"), command=self.capture_deadzone_back_key).grid(row=0, column=0, padx=(0, 4), sticky="ew")
+        ttk.Button(row2, text=self.i18n.get("ui.set_end_deadzone_key"), command=self.capture_end_deadzone_key).grid(row=0, column=1, padx=(2, 2), sticky="ew")
+        ttk.Button(row2, text=self.i18n.get("ui.set_retry_key"), command=self.capture_retry_last_key).grid(row=0, column=2, padx=(4, 0), sticky="ew")
 
-        ctr = ttk.LabelFrame(right, text="控制")
-        ctr.grid(row=8, column=0, sticky="ew", pady=(0, 10), padx=6)
+        ctr = ttk.LabelFrame(right, text=self.i18n.get("ui.control"))
+        ctr.grid(row=9, column=0, sticky="ew", pady=(0, 10), padx=6)
+        ctr.columnconfigure(0, weight=1)
+        ctr.columnconfigure(1, weight=1)
         cbtn = ttk.Frame(ctr)
-        cbtn.grid(row=0, column=0, sticky="w", padx=8, pady=8)
-        ttk.Button(cbtn, text="开始测试", command=self.start_test).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(cbtn, text="停止/重置", command=self.reset_test).grid(row=0, column=1)
+        cbtn.grid(row=0, column=0, sticky="ew", padx=8, pady=8, columnspan=2)
+        cbtn.columnconfigure(0, weight=1)
+        cbtn.columnconfigure(1, weight=1)
+        ttk.Button(cbtn, text=self.i18n.get("ui.start_test"), command=self.start_test).grid(row=0, column=0, padx=(0, 4), sticky="ew")
+        ttk.Button(cbtn, text=self.i18n.get("ui.stop_reset"), command=self.reset_test).grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
         ttk.Label(
             right,
-            text=f"作者署名：哔哩哔哩：刘云耀   |   版本：{APP_VERSION}",
+            text=self.i18n.get("ui.author_footer").format(author=APP_AUTHOR, version=APP_VERSION),
             foreground="#888",
             font=("Microsoft YaHei", 9),
-        ).grid(row=9, column=0, sticky="w", padx=10, pady=(0, 16))
+        ).grid(row=10, column=0, sticky="w", padx=10, pady=(0, 16))
 
     def _refresh_wraplengths(self):
         try:
             w = max(420, self.winfo_width() // 2 - 40)
-            self.lbl_status.configure(wraplength=w)
-            self.lbl_tip.configure(wraplength=w)
+            if self.lbl_status is not None:
+                self.lbl_status.configure(wraplength=w)
+            if self.lbl_tip is not None:
+                self.lbl_tip.configure(wraplength=w)
             if self.lbl_hotkey_hint:
                 self.lbl_hotkey_hint.configure(wraplength=max(320, self.winfo_width() // 2 - 80))
-        except Exception:
+        except (RuntimeError, tk.TclError):
+            # UI 尚未初始化，跳过此轮更新
             pass
         self.after(350, self._refresh_wraplengths)
 
-    # ================= 手柄模拟控制 =================
+    # ===== 手柄模拟 =====
     def enable_emulation(self):
         self._log(f"enable_emulation: request kind={self.gamepad_type.get()}")
         if self.emu_enabled and self.gamepad is not None:
-            self.status.set("模拟手柄已开启：不会重启设备。")
+            self.status.set(self.i18n.get("messages.emulation_already_on"))
             self._log("enable_emulation: already enabled (no restart).")
             return
         try:
@@ -1055,41 +1133,80 @@ class App(tk.Tk):
         except Exception as e:
             self._log(f"enable_emulation: FAIL err={repr(e)}", level="error")
             self._log_user_hint(
-                title="开启虚拟手柄失败",
-                cause="可能是 ViGEm 驱动/权限/杀软拦截/系统环境问题（偏环境问题）",
-                action="建议：确认安装 ViGEmBus；以管理员运行；关闭拦截；重启后再试。",
+                title=self.i18n.get("hints.enable_gamepad_fail_title"),
+                cause=self.i18n.get("hints.enable_gamepad_fail_cause"),
+                action=self.i18n.get("hints.enable_gamepad_fail_action"),
                 who="USER_ENV",
             )
-            messagebox.showerror("开启失败", str(e))
+            messagebox.showerror(self.i18n.get("hints.enable_gamepad_fail_dialog"), str(e))
             return
         self.emu_enabled = True
-        self.lbl_emu.configure(text=f"状态：已开启（{self.gamepad_type.get()}）", foreground="#008800")
-        self.status.set("✅ 已开启模拟手柄。请切回游戏后再开始测试。")
-        self.cmb_pad.configure(state="disabled")
+        if self.lbl_emu is not None:
+            self.lbl_emu.configure(text=f"状态：已开启（{self.gamepad_type.get()}）", foreground="#008800")
+        self.status.set(self.i18n.get("messages.emulation_enabled"))
+        if self.cmb_pad is not None:
+            self.cmb_pad.configure(state="disabled")
         self._log("enable_emulation: SUCCESS")
 
     def neutral_only(self):
         self._log("neutral_only")
         if not self.emu_enabled or self.gamepad is None:
-            self.status.set("尚未开启模拟手柄。")
+            self.status.set(self.i18n.get("messages.emulation_not_enabled"))
             self._log("neutral_only: ignored (emu not enabled).", level="warning")
             return
         try:
             self.gamepad.neutral()
-        except Exception:
-            self._log("neutral_only: gamepad.neutral exception", level="warning")
-        self.left_stick.set_value(0.0, 0.0)
-        self.right_stick.set_value(0.0, 0.0)
+        except Exception as e:
+            self._log(f"neutral_only: gamepad.neutral exception: {type(e).__name__}", level="warning")
+        if self.left_stick is not None:
+            self.left_stick.set_value(0.0, 0.0)
+        if self.right_stick is not None:
+            self.right_stick.set_value(0.0, 0.0)
         self._hold_applied = False
-        self.status.set("已回中（不会断开/重启虚拟手柄）。")
+        self.status.set(self.i18n.get("messages.neutral_done"))
 
-    # ================= 热键设置 =================
+    def _on_language_changed(self, lang_codes):
+        """语言选择变化回调"""
+        selected_name = self.cmb_language.get()
+        lang_code = self._lang_name_to_code.get(selected_name, "zh_CN")
+        
+        # 设置新语言
+        self.i18n.set_language(lang_code)
+        self.current_language_name.set(selected_name)
+        
+        self._log(f"Language changed to: {lang_code}")
+        
+        # 重新构建 UI 以应用新语言
+        try:
+            for widget in self.winfo_children():
+                widget.destroy()
+            
+            # 重新构建 UI
+            self._build_ui()
+            
+            # 重新绑定快捷键
+            self.bind_all("<Key>", self._on_any_key)
+            self.after(250, self._refresh_wraplengths)
+            
+            # 更新状态栏为新语言的初始提示
+            self.status.set(self.i18n.get("messages.initial_hint"))
+            
+            self._log(f"UI rebuilt for language: {lang_code}")
+        except Exception as e:
+            self._log(f"UI rebuild error: {e}", level="error")
+            # 降级：只更新 i18n，不重建 UI
+            self.status.set(self.i18n.get("hints.language_switched_status").format(lang_code=lang_code))
+
+    # ===== 热键 =====
     def _keys_text(self):
-        return (
-            f"开始键：{self.start_key}    记录键：{self.record_key}\n"
-            f"死区探测键：{self.deadzone_key}    回退死区键：{self.deadzone_back_key}\n"
-            f"结束死区键：{self.end_deadzone_key}\n"
-            f"当前热键模式：{self.hotkey_backend.get()}（会按绑定按键自动适配）"
+        return self.i18n.get("ui.hotkey_keys_label").format(
+            start_key=self.start_key,
+            record_key=self.record_key,
+            retry_key=self.retry_last_key,
+            deadzone_key=self.deadzone_key,
+            deadzone_back_key=self.deadzone_back_key,
+            end_deadzone_key=self.end_deadzone_key,
+            mode=self.hotkey_backend.get()
         )
 
     def capture_start_key(self):
@@ -1112,9 +1229,13 @@ class App(tk.Tk):
         self.capture_mode = "end_deadzone"
         self._begin_capture()
 
+    def capture_retry_last_key(self):
+        self.capture_mode = "retry_last"
+        self._begin_capture()
+
     def _begin_capture(self):
         if self.is_armed or self._test_running or self.mode != "idle":
-            self.status.set("⚠️ 测试进行中，禁止修改热键（请先停止/重置）。")
+            self.status.set(self.i18n.get("messages.hotkey_capture_forbidden"))
             self._log("hotkey capture blocked: test is running", level="warning")
             self._log_user_hint(
                 title="尝试在测试中改热键",
@@ -1125,16 +1246,16 @@ class App(tk.Tk):
             self.capture_mode = None
             return
 
-        self.status.set("请按下你要绑定的键…（不会弹窗打断）")
+        self.status.set(self.i18n.get("messages.hotkey_capture_waiting"))
 
         backend = (self.hotkey_backend.get() or "keyboard_name").strip()
         self.capture_target_backend = backend
 
         if backend == "keyboard_scan":
-            self.status.set("等待按键：扫描码模式捕获中…（直接按键即可）")
+            self.status.set(self.i18n.get("messages.hotkey_capture_scan"))
             self._start_scan_capture_thread()
         else:
-            self.status.set("等待按键：键名模式捕获中…（在窗口里按键即可）")
+            self.status.set(self.i18n.get("messages.hotkey_capture_name"))
 
     def _start_scan_capture_thread(self):
         if self._scan_capture_thread and self._scan_capture_thread.is_alive():
@@ -1162,9 +1283,9 @@ class App(tk.Tk):
             except Exception as ex:
                 self._log(f"scan capture exception: {repr(ex)}", level="warning")
                 self._log_user_hint(
-                    title="扫描码捕获失败",
-                    cause="可能是系统权限/键盘钩子被拦截/杀软拦截（偏环境问题）",
-                    action="建议：以管理员运行；关闭拦截；或换用键名模式 + F键。",
+                    title=self.i18n.get("hints.hotkey_capture_fail_title"),
+                    cause=self.i18n.get("hints.hotkey_capture_fail_cause"),
+                    action=self.i18n.get("hints.hotkey_capture_fail_action"),
                     who="USER_ENV",
                 )
 
@@ -1193,20 +1314,24 @@ class App(tk.Tk):
         elif mode == "end_deadzone":
             self.end_deadzone_key = hk_name
             self.end_deadzone_scan = sc
+        elif mode == "retry_last":
+            self.retry_last_key = hk_name
+            self.retry_last_scan = sc
 
         self._auto_select_backend(reason=f"capture_{mode}")
 
-        self.lbl_keys.configure(text=self._keys_text())
+        if self.lbl_keys is not None:
+            self.lbl_keys.configure(text=self._keys_text())
         self._register_hotkeys()
 
-        self.status.set("✅ 热键已更新（模式会自动适配）")
+        self.status.set(self.i18n.get("messages.hotkey_updated"))
         self._log(f"hotkeys updated: {self._keys_text()}")
 
         if self._is_symbol_or_digit_single_key(hk_name):
             self._log_user_hint(
-                title="你绑定了数字/符号键",
-                cause="数字/符号键在 keyboard_name 下经常兼容性差（不是代码bug，是常见环境限制）",
-                action="已自动切换到 keyboard_scan；若你想回键名模式，把这些键改成 F键/字母即可。",
+                title="Symbol or digit key detected",
+                cause="Symbol/digit keys often have compatibility issues in keyboard_name mode (not a code bug, but a common environment limitation)",
+                action="Auto-switched to keyboard_scan; if you want to return to keyboard_name mode, change these keys to F-keys/letters.",
                 who="USER_ENV",
             )
 
@@ -1217,7 +1342,7 @@ class App(tk.Tk):
             return
 
         if self.is_armed or self._test_running or self.mode != "idle":
-            self.status.set("⚠️ 测试进行中，禁止修改热键（请先停止/重置）。")
+            self.status.set(self.i18n.get("messages.hotkey_capture_forbidden"))
             self._log("hotkey capture blocked: test is running", level="warning")
             self.capture_mode = None
             return
@@ -1228,22 +1353,26 @@ class App(tk.Tk):
 
         self._apply_captured_hotkey(hk, None)
 
-    # ================= 参数与采样列表 =================
+    # ===== 参数 =====
     def _parse_sample_count(self) -> int:
         s = (self.sample_count.get() or "").strip()
         try:
             n = int(s)
-        except Exception:
-            raise ValueError("采样点数量必须是整数（2~10）。")
-        if n < 2 or n > 10:
-            raise ValueError("采样点数量范围：2~10。")
+        except (ValueError, TypeError):
+            raise ValueError(self.i18n.get("errors.sample_count_invalid_type"))
+        if n < 2 or n > 100:
+            raise ValueError(self.i18n.get("errors.sample_count_out_of_range"))
         return n
 
     def _validate_ranges(self):
-        mn = float(self.min_mag.get())
-        mx = float(self.max_mag.get())
+        try:
+            mn = float(self.min_mag.get())
+            mx = float(self.max_mag.get())
+        except (ValueError, TypeError) as e:
+            self._log(f"Invalid magnitude range values: {e}", level="error")
+            raise ValueError(self.i18n.get("errors.magnitude_range_invalid"))
         if not (0.0 <= mn < mx <= 1.0):
-            raise ValueError("幅值范围必须满足：0 <= MIN < MAX <= 1。")
+            raise ValueError(self.i18n.get("errors.magnitude_range_invalid"))
         return mn, mx
 
     def build_measure_magnitudes(self, measure_points: int, deadzone: float):
@@ -1265,7 +1394,7 @@ class App(tk.Tk):
         mags[-1] = round(mx, 4)
         return mags
 
-    # ================= 测试控制 =================
+    # ===== 测试 =====
     def start_test(self):
         if self._test_running or self.is_armed or self.mode != "idle":
             self._log(f"start_test ignored: already running mode={self.mode} is_armed={self.is_armed}", level="warning")
@@ -1285,12 +1414,12 @@ class App(tk.Tk):
 
         try:
             if not (self.emu_enabled and self.gamepad):
-                messagebox.showwarning("未开启模拟", "请先点击【开启模拟手柄】。")
+                messagebox.showwarning(self.i18n.get("hints.no_emulation_start_dialog_title"), self.i18n.get("hints.no_emulation_start_dialog_msg"))
                 self._log("start_test: blocked (emu not enabled).", level="warning")
                 self._log_user_hint(
-                    title="未开启模拟手柄就开始测试",
-                    cause="这是操作顺序问题（用户操作问题）",
-                    action="先点【开启模拟手柄】，再开始测试。",
+                    title=self.i18n.get("hints.no_emulation_start_title"),
+                    cause=self.i18n.get("hints.no_emulation_start_cause"),
+                    action=self.i18n.get("hints.no_emulation_start_action"),
                     who="USER_OP",
                 )
                 return
@@ -1301,12 +1430,12 @@ class App(tk.Tk):
             except Exception as e:
                 self._log(f"start_test: param error {repr(e)}", level="error")
                 self._log_user_hint(
-                    title="参数错误导致无法开始测试",
-                    cause="输入的参数不合法（用户操作问题）",
-                    action="按提示修正：采样点 2~10；且 0<=MIN<MAX<=1。",
+                    title=self.i18n.get("hints.param_error_title"),
+                    cause=self.i18n.get("hints.param_error_cause"),
+                    action=self.i18n.get("hints.param_error_action"),
                     who="USER_OP",
                 )
-                messagebox.showerror("参数错误", str(e))
+                messagebox.showerror(self.i18n.get("hints.param_error_dialog"), str(e))
                 return
 
             self.is_armed = True
@@ -1330,13 +1459,10 @@ class App(tk.Tk):
 
             self._log(f"start_test: enter deadzone, m={self.deadzone_current_m:.4f}")
 
-            self.status.set(
-                "✅ 已开始测试：进入【死区探测】。\n"
-                f"当前幅值：m={self.deadzone_current_m:.4f}\n"
-                "不动：按【死区探测键】继续增加。\n"
-                "动得过快：按【回退死区键】回退（可回到 0）。\n"
-                "开始缓慢移动：按【结束死区键】确认死区并进入曲线采样。"
+            msg = self.i18n.get("messages.test_started").format(
+                magnitude=self.deadzone_current_m
             )
+            self.status.set(msg)
         finally:
             if not self.is_armed:
                 self._test_running = False
@@ -1357,7 +1483,8 @@ class App(tk.Tk):
         self.deadzone_mag = 0.0
         self.allow_adjust_after_deadzone = True
 
-        self.right_stick.set_value(0.0, 0.0)
+        if self.right_stick is not None:
+            self.right_stick.set_value(0.0, 0.0)
 
         try:
             if self.gamepad:
@@ -1366,10 +1493,10 @@ class App(tk.Tk):
             self._log("reset_test: release_hold exception", level="warning")
         self._hold_applied = False
 
-        self.status.set("已停止并重置（虚拟手柄不会断开/重启）。")
-        # ✅ v1.6beta：不再在 reset_test 停止日志（日志仅 on_close 停止）
+        self.status.set(self.i18n.get("messages.test_stopped"))
+        # v1.6: 日志仅 on_close 停止）
 
-    # ================= 死区阶段按键 =================
+    # ===== 死区 =====
     def on_deadzone_key(self):
         if not self.is_armed:
             return
@@ -1387,15 +1514,15 @@ class App(tk.Tk):
         self._log(f"deadzone +step => m={self.deadzone_current_m:.4f} mode={self.mode}")
 
         if self.mode == "deadzone":
-            self.status.set(
-                f"【死区探测】仍不动：m → {self.deadzone_current_m:.4f}\n"
-                "开始缓慢移动：按【结束死区键】。"
+            msg = self.i18n.get("messages.deadzone_increased").format(
+                magnitude=self.deadzone_current_m
             )
+            self.status.set(msg)
         else:
-            self.status.set(
-                f"【第1点微调】已增加死区候选值：m → {self.deadzone_current_m:.4f}\n"
-                "确认后继续按【记录键】开始计时。"
+            msg = self.i18n.get("messages.deadzone_adjust").format(
+                magnitude=self.deadzone_current_m
             )
+            self.status.set(msg)
 
     def on_deadzone_back_key(self):
         if not self.is_armed:
@@ -1413,22 +1540,23 @@ class App(tk.Tk):
 
         if self.deadzone_current_m <= 0.0:
             self.deadzone_current_m = 0.0
-            self.right_stick.set_value(0.0, 0.0)
+            if self.right_stick is not None:
+                self.right_stick.set_value(0.0, 0.0)
         else:
             self._apply_test_stick(self.deadzone_current_m)
 
         self._log(f"deadzone -back => m={self.deadzone_current_m:.4f} mode={self.mode}")
 
         if self.mode == "deadzone":
-            self.status.set(
-                f"【死区探测】已回退：m → {self.deadzone_current_m:.4f}\n"
-                "开始缓慢移动：按【结束死区键】。"
+            msg = self.i18n.get("messages.deadzone_decreased").format(
+                magnitude=self.deadzone_current_m
             )
+            self.status.set(msg)
         else:
-            self.status.set(
-                f"【第1点微调】已回退死区候选值：m → {self.deadzone_current_m:.4f}\n"
-                "确认后继续按【记录键】开始计时。"
+            msg = self.i18n.get("messages.deadzone_adjust_back").format(
+                magnitude=self.deadzone_current_m
             )
+            self.status.set(msg)
 
     def on_end_deadzone_key(self):
         if not self.is_armed:
@@ -1450,22 +1578,23 @@ class App(tk.Tk):
         self.in_trial = False
         self.t0 = None
 
-        self.right_stick.set_value(0.0, 0.0)
+        if self.right_stick is not None:
+            self.right_stick.set_value(0.0, 0.0)
 
         if self.deadzone_mag <= 0.0:
-            first_point_text = "无死区：第1点固定为 (0,0)。"
+            first_point_text = self.i18n.get("messages.first_point_text_no_deadzone")
         else:
-            first_point_text = f"死区≈{self.deadzone_mag:.4f}：第1点固定为 (死区,0)。"
+            first_point_text = self.i18n.get("messages.first_point_text_with_deadzone").format(
+                magnitude=self.deadzone_mag
+            )
 
         nm = self.measure_mag_list[0] if self.measure_mag_list else float(self.max_mag.get())
-        self.status.set(
-            "✅ 已结束死区，进入【曲线采样】。\n"
-            f"{first_point_text}\n"
-            f"测量点数量：{len(self.measure_mag_list)}（最后一点=MAX）\n"
-            f"下一次测量幅值：m={nm:.4f}\n"
-            "按【记录键】一次开始计时，转满一圈后再按一次结束并保存。\n"
-            "（仅在第1个点开始前：仍可用【死区探测/回退死区】微调一次）"
+        msg = self.i18n.get("messages.deadzone_ended").format(
+            first_point_text=first_point_text,
+            point_count=len(self.measure_mag_list),
+            next_mag=nm
         )
+        self.status.set(msg)
 
     def _can_adjust_deadzone_in_curve(self) -> bool:
         if not self.allow_adjust_after_deadzone:
@@ -1474,7 +1603,7 @@ class App(tk.Tk):
             return False
         return True
 
-    # ================= 曲线采样：记录键 =================
+    # ===== 采样 =====
     def on_record_key(self):
         if not self.is_armed:
             return
@@ -1489,11 +1618,14 @@ class App(tk.Tk):
 
             self._log(f"record START mag_index={self.mag_index} rep={self.rep_index} m={m:.4f}")
 
-            self.status.set(
-                f"计时开始：m={m:.4f}（第 {self.rep_index + 1}/{int(self.repeats_per_mag.get())} 次）\n"
-                f"点进度：{self.mag_index + 1}/{len(self.measure_mag_list)}\n"
-                "转满一圈后再按【记录键】结束并保存。"
+            msg = self.i18n.get("messages.record_start").format(
+                magnitude=m,
+                repeat=self.rep_index + 1,
+                total=int(self.repeats_per_mag.get()),
+                current=self.mag_index + 1,
+                total_points=len(self.measure_mag_list)
             )
+            self.status.set(msg)
             return
 
         t1 = time.perf_counter()
@@ -1507,7 +1639,8 @@ class App(tk.Tk):
         self.rep_index += 1
         self.in_trial = False
         self.t0 = None
-        self.right_stick.set_value(0.0, 0.0)
+        if self.right_stick is not None:
+            self.right_stick.set_value(0.0, 0.0)
 
         if self.mag_index == 0 and self.rep_index >= 1:
             self.allow_adjust_after_deadzone = False
@@ -1525,16 +1658,63 @@ class App(tk.Tk):
             return
 
         nm = self.measure_mag_list[self.mag_index] if self.measure_mag_list else float(self.max_mag.get())
+        msg = self.i18n.get("messages.record_saved").format(
+            magnitude=m,
+            time=dt,
+            next_mag=nm,
+            current=self.mag_index + 1,
+            total_points=len(self.measure_mag_list)
+        )
+        self.status.set(msg)
+
+    def on_retry_last_key(self):
+        # 重新测试上一个点（从头开始，重复设定的次数）
+        if not self.is_armed:
+            return
+        if self.mode != "curve":
+            return
+        
+        # 检查能否重测（至少在第1个点之后）
+        if self.mag_index == 0 and self.rep_index == 0:
+            self.status.set(self.i18n.get("messages.retry_no_test"))
+            self._log("retry_last_key ignored: no test started yet", level="warning")
+            return
+        
+        # 正在计时就先中止
+        if self.in_trial:
+            self.in_trial = False
+            self.t0 = None
+            if self.right_stick is not None:
+                self.right_stick.set_value(0.0, 0.0)
+            self._log("retry_last_key: interrupted ongoing trial")
+        
+        # 获取当前点幅值
+        mag_to_retry = self.measure_mag_list[self.mag_index] if self.measure_mag_list else float(self.max_mag.get())
+        
+        # 删除已有记录
+        self.results = [r for r in self.results if r["magnitude"] != mag_to_retry]
+        
+        # 重置为开头（rep_index = 0）
+        self.rep_index = 0
+        self.in_trial = False
+        self.t0 = None
+        if self.right_stick is not None:
+            self.right_stick.set_value(0.0, 0.0)
+        
+        self._log(f"retry_last_key: reset to mag_index={self.mag_index} rep_index=0 m={mag_to_retry:.4f}")
+        
         self.status.set(
-            f"已记录：m={m:.4f} 用时 {dt:.4f}s\n"
-            f"下一步：m={nm:.4f}\n"
-            f"点进度：{self.mag_index + 1}/{len(self.measure_mag_list)}\n"
-            "按【记录键】开始下一圈。"
+            self.i18n.get("messages.retry_reset_message").format(
+                magnitude=mag_to_retry,
+                repeat_count=int(self.repeats_per_mag.get())
+            )
         )
 
     def _apply_test_stick(self, m):
         m = float(m)
         d = self.direction.get()
+        if self.right_stick is None:
+            return
         if d == "right":
             self.right_stick.set_value(m, 0.0)
         elif d == "left":
@@ -1544,18 +1724,20 @@ class App(tk.Tk):
         elif d == "down":
             self.right_stick.set_value(0.0, -m)
 
-    # ================= keepalive =================
+    # ===== keepalive =====
     def _keepalive_btn_code(self):
         name = (self.keepalive_btn_name.get() or "").strip()
+        
+        # Build mapping from translated button names
         mapping = {
-            "方块/ X": ("square", "x"),
-            "叉/ A": ("cross", "a"),
-            "圆/ B": ("circle", "b"),
-            "三角/ Y": ("triangle", "y"),
-            "L1/ LB": ("l1", "lb"),
-            "R1/ RB": ("r1", "rb"),
-            "Share/ Back": ("share", "back"),
-            "Options/ Start": ("options", "start"),
+            self.i18n.get("ui.button_square"): ("square", "x"),
+            self.i18n.get("ui.button_cross"): ("cross", "a"),
+            self.i18n.get("ui.button_circle"): ("circle", "b"),
+            self.i18n.get("ui.button_triangle"): ("triangle", "y"),
+            self.i18n.get("ui.button_l1"): ("l1", "lb"),
+            self.i18n.get("ui.button_r1"): ("r1", "rb"),
+            self.i18n.get("ui.button_share"): ("share", "back"),
+            self.i18n.get("ui.button_options"): ("options", "start"),
         }
         ds4_code, x360_code = mapping.get(name, ("square", "x"))
         return ds4_code if self.gamepad_type.get() == "ds4" else x360_code
@@ -1575,28 +1757,30 @@ class App(tk.Tk):
         except Exception:
             self._log("keepalive tap exception", level="warning")
             self._log_user_hint(
-                title="keepalive 点按失败",
-                cause="可能是虚拟手柄当前不可用/驱动异常（偏环境问题）",
-                action="尝试停止测试并重新开启模拟手柄；或重启电脑后再试。",
+                title=self.i18n.get("hints.keepalive_tap_fail_title"),
+                cause=self.i18n.get("hints.keepalive_tap_fail_cause"),
+                action=self.i18n.get("hints.keepalive_tap_fail_action"),
                 who="USER_ENV",
             )
 
-    # ================= 测试期间长按 =================
+    # ===== 长按 =====
     def _hold_target(self):
         name = (self.hold_key_name.get() or "").strip()
 
-        if name.startswith("左扳机"):
+        # Check for trigger keys using translated names
+        if name.startswith(self.i18n.get("ui.trigger_l2")[:4]):  # "左扳" or "Left Trig"
             return ("trigger", "l2")
-        if name.startswith("右扳机"):
+        if name.startswith(self.i18n.get("ui.trigger_r2")[:4]):  # "右扳" or "Right Trig"
             return ("trigger", "r2")
 
+        # Build mapping from translated button names
         mapping = {
-            "L1/ LB": ("l1", "lb"),
-            "R1/ RB": ("r1", "rb"),
-            "方块/ X": ("square", "x"),
-            "叉/ A": ("cross", "a"),
-            "圆/ B": ("circle", "b"),
-            "三角/ Y": ("triangle", "y"),
+            self.i18n.get("ui.button_l1"): ("l1", "lb"),
+            self.i18n.get("ui.button_r1"): ("r1", "rb"),
+            self.i18n.get("ui.button_square"): ("square", "x"),
+            self.i18n.get("ui.button_cross"): ("cross", "a"),
+            self.i18n.get("ui.button_circle"): ("circle", "b"),
+            self.i18n.get("ui.button_triangle"): ("triangle", "y"),
         }
         ds4_code, x360_code = mapping.get(name, ("l1", "lb"))
         code = ds4_code if self.gamepad_type.get() == "ds4" else x360_code
@@ -1631,13 +1815,13 @@ class App(tk.Tk):
         except Exception:
             self._log("apply_hold_state exception", level="warning")
             self._log_user_hint(
-                title="长按按键应用失败",
-                cause="虚拟手柄/驱动状态异常或接口不支持（偏环境问题）",
-                action="先关闭长按功能；确认模拟手柄可用后再启用。",
+                title=self.i18n.get("hints.hold_key_apply_fail_title"),
+                cause=self.i18n.get("hints.hold_key_apply_fail_cause"),
+                action=self.i18n.get("hints.hold_key_apply_fail_action"),
                 who="USER_ENV",
             )
 
-    # ================= 输出曲线/反曲线（百分比交换点） =================
+    # ===== 输出 =====
     def _finish_and_save(self):
         self._log("_finish_and_save: ENTER")
         try:
@@ -1652,24 +1836,24 @@ class App(tk.Tk):
             if df.empty:
                 self._log("_finish_and_save: df empty", level="error")
                 self._log_user_hint(
-                    title="没有有效记录",
-                    cause="通常是用户没按记录键完成“开始/结束”两次，或测试中断（用户操作问题）",
-                    action="重新测试：每个点按一次开始计时，转满一圈后再按一次结束。",
+                    title=self.i18n.get("hints.no_valid_records_title"),
+                    cause=self.i18n.get("hints.no_valid_records_cause"),
+                    action=self.i18n.get("hints.no_valid_records_action"),
                     who="USER_OP",
                 )
-                messagebox.showerror("失败", f"没有有效记录。\n\n日志：{self.log_path}")
+                messagebox.showerror(self.i18n.get("hints.no_valid_records_dialog"), f"{self.i18n.get('messages.no_valid_records_msg')}\n\n{self.i18n.get('messages.log_path_prefix')}{self.log_path}")
                 return
 
             df_ok = df[df["seconds"].notna()].copy()
             if df_ok.empty:
                 self._log("_finish_and_save: df_ok empty", level="error")
                 self._log_user_hint(
-                    title="计时结果为空",
-                    cause="可能是记录流程没有完成（用户操作问题）",
-                    action="确保每次记录：先按一次开始，再按一次结束。",
+                    title=self.i18n.get("hints.timing_result_empty_title"),
+                    cause=self.i18n.get("hints.timing_result_empty_cause"),
+                    action=self.i18n.get("hints.timing_result_empty_action"),
                     who="USER_OP",
                 )
-                messagebox.showerror("失败", f"没有有效计时记录（seconds为空）。\n\n日志：{self.log_path}")
+                messagebox.showerror(self.i18n.get("hints.timing_result_empty_title"), f"{self.i18n.get('hints.timing_result_empty_dialog')}\n\n{self.i18n.get('messages.log_path_prefix')}{self.log_path}")
                 return
 
             g = df_ok.groupby("magnitude")["seconds"]
@@ -1696,12 +1880,12 @@ class App(tk.Tk):
             if len(xs_meas) == 0:
                 self._log("_finish_and_save: xs_meas empty", level="error")
                 self._log_user_hint(
-                    title="统计结果为空",
-                    cause="数据不足或记录过程异常（更偏用户操作/中断）",
-                    action="重新测试，确保每个点记录次数>0。",
+                    title=self.i18n.get("hints.stats_result_empty_title"),
+                    cause=self.i18n.get("hints.stats_result_empty_cause"),
+                    action=self.i18n.get("hints.stats_result_empty_action"),
                     who="USER_OP",
                 )
-                messagebox.showerror("失败", f"统计结果为空。\n\n日志：{self.log_path}")
+                messagebox.showerror(self.i18n.get("hints.stats_result_empty_title"), f"{self.i18n.get('hints.stats_result_empty_dialog')}\n\n{self.i18n.get('messages.log_path_prefix')}{self.log_path}")
                 return
 
             ys_mono = pav_isotonic_increasing(ys_meas)
@@ -1732,9 +1916,9 @@ class App(tk.Tk):
             self._plot_curve(
                 plot_x_disp,
                 plot_y_disp,
-                title="游戏实际灵敏度（显示坐标）",
-                xlabel="摇杆偏移（显示坐标）",
-                ylabel="游戏实际灵敏度（显示坐标）",
+                title=self.i18n.get("charts.curve_title"),
+                xlabel=self.i18n.get("charts.curve_xlabel"),
+                ylabel=self.i18n.get("charts.curve_ylabel"),
                 filename="曲线图.png",
                 with_coords=False,
                 xlim_max=Xmax,
@@ -1745,9 +1929,9 @@ class App(tk.Tk):
             self._plot_curve(
                 plot_x_disp,
                 plot_y_disp,
-                title="游戏实际灵敏度（显示坐标）",
-                xlabel="摇杆偏移（显示坐标）",
-                ylabel="游戏实际灵敏度（显示坐标）",
+                title=self.i18n.get("charts.curve_title"),
+                xlabel=self.i18n.get("charts.curve_xlabel"),
+                ylabel=self.i18n.get("charts.curve_ylabel"),
                 filename="带坐标曲线图.png",
                 with_coords=True,
                 xlim_max=Xmax,
@@ -1789,9 +1973,9 @@ class App(tk.Tk):
             self._plot_curve(
                 inv_x,
                 inv_y,
-                title="反曲线（百分比交换：与正向点一一对应）",
-                xlabel="反曲线 X（显示坐标）",
-                ylabel="反曲线 Y（显示坐标）",
+                title=self.i18n.get("charts.inverse_title"),
+                xlabel=self.i18n.get("charts.inverse_xlabel"),
+                ylabel=self.i18n.get("charts.inverse_ylabel"),
                 filename="反曲线图.png",
                 with_coords=False,
                 xlim_max=Xmax,
@@ -1802,9 +1986,9 @@ class App(tk.Tk):
             self._plot_curve(
                 inv_x,
                 inv_y,
-                title="反曲线（百分比交换：与正向点一一对应）",
-                xlabel="反曲线 X（显示坐标）",
-                ylabel="反曲线 Y（显示坐标）",
+                title=self.i18n.get("charts.inverse_title"),
+                xlabel=self.i18n.get("charts.inverse_xlabel"),
+                ylabel=self.i18n.get("charts.inverse_ylabel"),
                 filename="带坐标反曲线图.png",
                 with_coords=True,
                 xlim_max=Xmax,
@@ -1819,28 +2003,21 @@ class App(tk.Tk):
                 self._log("_finish_and_save: release_hold exception", level="warning")
             self._hold_applied = False
 
-            self.status.set(
-                "✅ 完成：已输出\n"
-                "  - 曲线图.png / 带坐标曲线图.png\n"
-                "  - 反曲线图.png / 带坐标反曲线图.png\n"
-                "  - results.csv / curve_summary.csv / compensation_table.csv\n"
-                f"  - 日志：{self.log_path}\n\n"
-                "说明：反曲线点数与正向曲线点数完全一致，并按“百分比交换”与每个正向点一一对应。"
-            )
-            messagebox.showinfo("完成", f"输出完成（文件在程序目录）。\n\n日志：{self.log_path}")
+            self.status.set(self.i18n.get("hints.export_complete_status").format(log_path=self.log_path))
+            messagebox.showinfo(self.i18n.get("hints.export_success_title"), f"{self.i18n.get('hints.export_success_msg')}\n\n{self.i18n.get('messages.log_path_prefix')}{self.log_path}")
             self._log("_finish_and_save: SUCCESS")
 
         except Exception:
             if self.logger:
                 self.logger.exception("_finish_and_save: EXCEPTION")
             self._log_user_hint(
-                title="输出阶段异常",
-                cause="更像代码/环境异常（需要看 traceback），用户很难仅靠操作解决",
-                action="把日志发给作者（尤其是包含 Traceback 的那段）。",
+                title=self.i18n.get("hints.output_phase_error_title"),
+                cause=self.i18n.get("hints.output_phase_error_cause"),
+                action=self.i18n.get("hints.output_phase_error_action"),
                 who="BUG",
             )
             try:
-                messagebox.showerror("输出失败", f"输出阶段发生异常。\n\n日志：{self.log_path}")
+                messagebox.showerror(self.i18n.get("hints.export_fail_title"), f"{self.i18n.get('hints.output_phase_error_dialog')}\n\n{self.i18n.get('messages.log_path_prefix')}{self.log_path}")
             except Exception:
                 pass
         finally:
@@ -1848,7 +2025,7 @@ class App(tk.Tk):
             self.is_armed = False
             self.in_trial = False
             self.mode = "idle"
-            # ✅ v1.6beta：不再在 finish_and_save 停止日志（日志仅 on_close 停止）
+            # v1.6: 日志仅 on_close 停止）
 
     def _plot_curve(
         self,
@@ -1862,53 +2039,110 @@ class App(tk.Tk):
         xlim_max=None,
         ylim_max=None,
     ):
+        # 100 种颜色
         colors = [
-            "#1f77b4",
-            "#ff7f0e",
-            "#2ca02c",
-            "#d62728",
-            "#9467bd",
-            "#8c564b",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#17becf",
+            # Tableau
+            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+            "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+            # Light
+            "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
+            "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5",
+            # Dark
+            "#1a4d7a", "#b35806", "#1d5a1d", "#8b1a1a", "#5a3d7a",
+            "#4a2f28", "#9b3d6b", "#5a5a5a", "#7a7a1a", "#0d6f80",
+            # Blue
+            "#003f87", "#1a5490", "#356aa0", "#5180b0", "#6d9bc0",
+            "#88b5d0", "#a3cfe0", "#bde9f0", "#d9f5ff", "#e8f9ff",
+            # Red/Orange
+            "#8b0000", "#a72828", "#c35050", "#d97878", "#e59a9a",
+            "#f0b8b8", "#fad4d4", "#fce8e8", "#fff0f0", "#ffe8e8",
+            # Green
+            "#0d5c0d", "#1a7a1a", "#2a9a2a", "#3ab83a", "#4ad04a",
+            "#5ae85a", "#7af87a", "#9aff9a", "#baffba", "#daffda",
+            # Purple
+            "#4a0080", "#6b1ba3", "#8b3dc6", "#a85dd9", "#c57dec",
+            "#d99dff", "#e8bfff", "#f0d4ff", "#f8e8ff", "#fdf0ff",
+            # Brown/Tan
+            "#66330d", "#804d26", "#9a6633", "#b3804d", "#cc9966",
+            "#d9ad7f", "#e6c299", "#f0d9b3", "#f5e8d0", "#faf5eb",
+            # Cyan/Teal
+            "#003333", "#004d4d", "#006666", "#1a8080", "#339999",
+            "#4db3b3", "#66cccc", "#80e6e6", "#99ffff", "#ccffff",
+            # Yellow
+            "#999900", "#b3b300", "#cccc00", "#e6e600", "#ffff00",
+            "#ffff33", "#ffff66", "#ffff99", "#ffffcc", "#fffff0",
         ]
 
-        plt.figure(figsize=(8.6, 5.6))
-        plt.plot(x_list, y_list, "-", linewidth=2)
+        # 计算所需高度（坐标显示在图表下方）
+        total_points = len(x_list)
+        
+        if with_coords:
+            max_rows = 20
+            num_cols = (total_points + max_rows - 1) // max_rows if total_points > 0 else 1
+            # 估算坐标区域需要的高度（每行约0.3cm）
+            coords_height = 0.15 + 0.3 * max_rows / 2.54  # 转换为英寸
+        else:
+            coords_height = 0
+        
+        # 图表高度 = 基础高度 + 坐标区域高度
+        fig_height = 5.6 + coords_height
+        
+        fig = plt.figure(figsize=(8.6, fig_height))
+        
+        # 创建图表子区域
+        if with_coords:
+            # 图表占据上面部分，坐标区在下面
+            ax = fig.add_axes((0.1, (coords_height + 0.3) / fig_height, 0.8, 5.6 / fig_height))
+        else:
+            ax = fig.add_subplot(111)
+        
+        ax.plot(x_list, y_list, "-", linewidth=2)
 
         for i, (x, y) in enumerate(zip(x_list, y_list), start=1):
             c = colors[(i - 1) % len(colors)]
-            plt.scatter([x], [y], s=55, color=c, zorder=3)
+            ax.scatter([x], [y], s=55, color=c, zorder=3)
 
-        plt.title(title)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        plt.grid(True)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.grid(True)
 
         if xlim_max is not None:
-            plt.xlim(0, float(xlim_max))
+            ax.set_xlim(0, float(xlim_max))
         if ylim_max is not None:
-            plt.ylim(0, float(ylim_max))
+            ax.set_ylim(0, float(ylim_max))
 
         if with_coords:
-            x_text = 0.72
-            y_text = 0.92
-            dy = 0.055
+            # 坐标显示在图表下方专门区域
+            max_rows = 20
+            col_width = 0.19
+            
+            # 下方区域从 0 到 coords_height/fig_height
+            bottom_area_height = coords_height / fig_height
+            y_base = bottom_area_height * 0.9  # 区域内的起始y
+            row_dy = bottom_area_height * 0.8 / max_rows  # 每行的间距
+            
             for idx, (x, y) in enumerate(zip(x_list, y_list), start=1):
                 c = colors[(idx - 1) % len(colors)]
                 s = f"{idx}: ({x:.1f}, {y:.1f})"
-                plt.gcf().text(x_text, y_text, s, color=c, fontsize=10, ha="left", va="center")
-                y_text -= dy
-                if y_text < 0.06:
-                    break
+                
+                row = (idx - 1) % max_rows
+                col = (idx - 1) // max_rows
+                
+                x_pos = 0.1 + col * col_width
+                y_pos = y_base - row * row_dy
+                
+                fig.text(x_pos, y_pos, s, color=c, fontsize=8.5, ha="left", va="center", family='monospace')
 
-        plt.tight_layout()
-        plt.savefig(filename, dpi=220)
+        # 添加水印（右下角）
+        watermark = f"{APP_NAME} by {APP_AUTHOR}"
+        fig.text(0.99, 0.01, watermark, fontsize=9, ha="right", va="bottom", 
+                color="#888888", alpha=0.7, style='italic')
+
+        plt.savefig(filename, dpi=220, bbox_inches='tight')
         plt.close()
 
-    # ================= 输出线程 =================
+    # ===== 输出 =====
     def _output_loop(self):
         hz = 100.0
         interval = 1.0 / hz
@@ -1920,8 +2154,12 @@ class App(tk.Tk):
 
                     self._apply_hold_state()
 
-                    lx, ly = self.left_stick.get_value()
-                    rx, ry = self.right_stick.get_value()
+                    lx, ly = (0.0, 0.0)
+                    rx, ry = (0.0, 0.0)
+                    if self.left_stick is not None:
+                        lx, ly = self.left_stick.get_value()
+                    if self.right_stick is not None:
+                        rx, ry = self.right_stick.get_value()
                     self.gamepad.set_sticks(lx, ly, rx, ry)
             except Exception:
                 pass
@@ -1932,7 +2170,7 @@ class App(tk.Tk):
 
         if self.is_armed or self._test_running or self.mode != "idle":
             try:
-                ok = messagebox.askyesno("确认退出", "测试进行中，确定要退出吗？（将中止本次测试）")
+                ok = messagebox.askyesno(self.i18n.get("hints.exit_confirm_title"), self.i18n.get("hints.exit_confirm_msg"))
             except Exception:
                 ok = True
             if not ok:

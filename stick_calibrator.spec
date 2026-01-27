@@ -35,6 +35,11 @@ configs_dir = os.path.join(BASE_DIR, "configs")
 if os.path.isdir(configs_dir):
     datas += [(configs_dir, "configs")]
 
+# 把 languages 目录打进包里（国际化文件）
+languages_dir = os.path.join(BASE_DIR, "languages")
+if os.path.isdir(languages_dir):
+    datas += [(languages_dir, "languages")]
+
 # =========================
 # 2) 强制打包 ViGEmClient.dll
 # =========================
@@ -102,7 +107,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="stick_calibrator",   # ← EXE 名字保持不变
+    name="游戏摇杆曲线探测器_v1.8.2",   # ← EXE 名字：中文名 + 版本号
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
