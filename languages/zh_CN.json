@@ -48,6 +48,13 @@
     "control": "控制",
     "start_test": "开始测试",
     "stop_reset": "停止/重置",
+    "export_and_charts": "导出与图表",
+    "generate_charts": "生成曲线图（当前）",
+    "generate_from_csv": "从CSV生成曲线图",
+    "generate_charts_prompt_title": "图表待生成",
+    "generate_charts_prompt_body": "CSV 已保存。点击【生成曲线图】立即出图，或稍后用【从CSV生成】。",
+    "select_csv_title": "选择CSV文件生成曲线图",
+    "all_files": "所有文件",
     "author_footer": "作者署名：哔哩哔哩：{author}   |   版本：{version}",
     "left_stick": "左摇杆（鼠标拖动）",
     "right_stick": "右摇杆（鼠标拖动）",
@@ -112,6 +119,7 @@
     "record_saved": "已记录：m={magnitude:.4f} 用时 {time:.4f}s\n下一步：m={next_mag:.4f}\n点进度：{current}/{total_points}\n按【记录键】开始下一圈。",
     "retry_no_test": "⚠️ 还未开始任何测试，无法重测。",
     "test_not_enabled": "请先点击【开启模拟手柄】。",
+    "ready_to_generate_charts": "✅ CSV 已保存，可生成曲线图。",
     "param_error": "按提示修正：采样点 2~10；且 0<=MIN<MAX<=1。",
     "retry_reset_message": "【重新测试】已重置当前点（m={magnitude:.4f}）\\n需重测次数：{repeat_count}\\n按【记录键】开始重新测试。",
     "first_point_text_no_deadzone": "无死区：第1点固定为 (0,0)。",
@@ -191,6 +199,7 @@
   "errors": {
     "sample_count_invalid_type": "采样点数量必须是整数（2~100）。",
     "sample_count_out_of_range": "采样点数量范围：2~100。",
-    "magnitude_range_invalid": "幅值范围必须满足：0 <= MIN < MAX <= 1。"
+    "magnitude_range_invalid": "幅值范围必须满足：0 <= MIN < MAX <= 1。",
+    "csv_format_not_supported": "CSV 格式不支持（需 results.csv 或 curve_summary.csv 结构）。"
   }
 }

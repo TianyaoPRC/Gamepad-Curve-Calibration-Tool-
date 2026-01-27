@@ -20,7 +20,7 @@ from i18n import init_i18n, get_i18n, T
 
 
 # ===== App Meta =====
-APP_VERSION = "v1.8.2"
+APP_VERSION = "v1.8.5"
 APP_NAME = "游戏摇杆曲线探测器"
 APP_AUTHOR = "刘云耀"
 APP_TITLE = f"{APP_NAME} {APP_VERSION}  |  哔哩哔哩：{APP_AUTHOR}"
@@ -566,10 +566,29 @@ class App(tk.Tk):
             f"mag_index={self.mag_index} rep_index={self.rep_index}"
         )
 
+    def _ensure_scan_code(self, name: str, current_sc: int | None) -> int | None:
+        # 解决：数字/符号键在 keyboard_name 捕获后被自动切到 keyboard_scan，但没有 scan_code -> 热键无法触发
+        if current_sc is not None:
+            return current_sc
+        try:
+            codes = keyboard.key_to_scan_codes(name)
+            if codes:
+                return int(codes[0])
+        except Exception:
+            pass
+        self._log(f"scan code resolve failed for '{name}'", level="warning")
+        return None
+
     def _on_hotkey_start(self):
         self._hotkey_log("start")
         if not self._hotkey_debounced("start"):
             return
+
+        # 若尚未开启手柄模拟，自动开启（但不提前改测试状态）
+        if not self.emu_enabled or self.gamepad is None:
+            self.enable_emulation()
+
+        # 交给 start_test 正常进入流程（内部会设置 is_armed/mode）
         self.start_test()
 
     def _on_hotkey_record(self):
@@ -745,6 +764,13 @@ class App(tk.Tk):
         self._unregister_name_hotkeys()
 
         if backend == "keyboard_scan":
+            # 若此前在 keyboard_name 模式绑定了数字/符号，切换到 scan 时补全 scan_code
+            self.start_scan = self._ensure_scan_code(self.start_key, self.start_scan)
+            self.record_scan = self._ensure_scan_code(self.record_key, self.record_scan)
+            self.deadzone_scan = self._ensure_scan_code(self.deadzone_key, self.deadzone_scan)
+            self.deadzone_back_scan = self._ensure_scan_code(self.deadzone_back_key, self.deadzone_back_scan)
+            self.end_deadzone_scan = self._ensure_scan_code(self.end_deadzone_key, self.end_deadzone_scan)
+            self.retry_last_scan = self._ensure_scan_code(self.retry_last_key, self.retry_last_scan)
             self._install_scan_hook()
             return
 
@@ -1100,12 +1126,20 @@ class App(tk.Tk):
         ttk.Button(cbtn, text=self.i18n.get("ui.start_test"), command=self.start_test).grid(row=0, column=0, padx=(0, 4), sticky="ew")
         ttk.Button(cbtn, text=self.i18n.get("ui.stop_reset"), command=self.reset_test).grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
+        # ===== 导出与图表 =====
+        charts = ttk.LabelFrame(right, text=self.i18n.get("ui.export_and_charts"))
+        charts.grid(row=10, column=0, sticky="ew", pady=(0, 10), padx=6)
+        charts.columnconfigure(0, weight=1)
+        charts.columnconfigure(1, weight=1)
+        ttk.Button(charts, text=self.i18n.get("ui.generate_charts"), command=self.generate_charts_from_current).grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=8)
+        ttk.Button(charts, text=self.i18n.get("ui.generate_from_csv"), command=self.generate_charts_from_csv).grid(row=0, column=1, sticky="ew", padx=(4, 8), pady=8)
+
         ttk.Label(
             right,
             text=self.i18n.get("ui.author_footer").format(author=APP_AUTHOR, version=APP_VERSION),
             foreground="#888",
             font=("Microsoft YaHei", 9),
-        ).grid(row=10, column=0, sticky="w", padx=10, pady=(0, 16))
+        ).grid(row=11, column=0, sticky="w", padx=10, pady=(0, 16))
 
     def _refresh_wraplengths(self):
         try:
@@ -1688,27 +1722,41 @@ class App(tk.Tk):
                 self.right_stick.set_value(0.0, 0.0)
             self._log("retry_last_key: interrupted ongoing trial")
         
-        # 获取当前点幅值
-        mag_to_retry = self.measure_mag_list[self.mag_index] if self.measure_mag_list else float(self.max_mag.get())
+        # 目标重测点：若当前刚进入下一点（rep_index==0），则退回到上一点
+        target_index = self.mag_index
+        if self.rep_index == 0 and self.mag_index > 0:
+            target_index = self.mag_index - 1
         
-        # 删除已有记录
-        self.results = [r for r in self.results if r["magnitude"] != mag_to_retry]
-        
-        # 重置为开头（rep_index = 0）
-        self.rep_index = 0
+        # 获取该点幅值
+        mag_to_retry = self.measure_mag_list[target_index] if self.measure_mag_list else float(self.max_mag.get())
+
+        # 删除当前点的已有记录（仅当前 magnitude），保留其他点
+        self.results = [r for r in self.results if r.get("magnitude") != mag_to_retry]
+
+        # 回到该点的开头
         self.in_trial = False
         self.t0 = None
+        self.rep_index = 0
+        self.mag_index = target_index
         if self.right_stick is not None:
             self.right_stick.set_value(0.0, 0.0)
-        
+
         self._log(f"retry_last_key: reset to mag_index={self.mag_index} rep_index=0 m={mag_to_retry:.4f}")
-        
+
+        # 状态提示
+        try:
+            rc = int(self.repeats_per_mag.get())
+        except Exception:
+            rc = 1
         self.status.set(
             self.i18n.get("messages.retry_reset_message").format(
                 magnitude=mag_to_retry,
-                repeat_count=int(self.repeats_per_mag.get())
+                repeat_count=rc,
             )
         )
+
+        # 确保当前点后续还能继续记录（mag_index 不动，只重置 rep_index）
+        self.allow_adjust_after_deadzone = False
 
     def _apply_test_stick(self, m):
         m = float(m)
@@ -1888,113 +1936,7 @@ class App(tk.Tk):
                 messagebox.showerror(self.i18n.get("hints.stats_result_empty_title"), f"{self.i18n.get('hints.stats_result_empty_dialog')}\n\n{self.i18n.get('messages.log_path_prefix')}{self.log_path}")
                 return
 
-            ys_mono = pav_isotonic_increasing(ys_meas)
-
-            x0 = 0.0 if dz <= 0.0 else dz
-            y0 = 0.0
-
-            y_end = float(ys_mono[-1])
-            if y_end <= 1e-12:
-                y_end = max(ys_mono) if max(ys_mono) > 1e-12 else 1.0
-
-            x_scale = Xmax / mx
-            y_scale = Ymax / y_end
-
-            plot_x = [x0]
-            plot_y = [y0]
-            for x, y in zip(xs_meas, ys_mono):
-                if dz > 0 and x <= dz:
-                    plot_x.append(float(x))
-                    plot_y.append(0.0)
-                else:
-                    plot_x.append(float(x))
-                    plot_y.append(float(y))
-
-            plot_x_disp = [v * x_scale for v in plot_x]
-            plot_y_disp = [v * y_scale for v in plot_y]
-
-            self._plot_curve(
-                plot_x_disp,
-                plot_y_disp,
-                title=self.i18n.get("charts.curve_title"),
-                xlabel=self.i18n.get("charts.curve_xlabel"),
-                ylabel=self.i18n.get("charts.curve_ylabel"),
-                filename="曲线图.png",
-                with_coords=False,
-                xlim_max=Xmax,
-                ylim_max=Ymax,
-            )
-            self._log("save: 曲线图.png OK")
-
-            self._plot_curve(
-                plot_x_disp,
-                plot_y_disp,
-                title=self.i18n.get("charts.curve_title"),
-                xlabel=self.i18n.get("charts.curve_xlabel"),
-                ylabel=self.i18n.get("charts.curve_ylabel"),
-                filename="带坐标曲线图.png",
-                with_coords=True,
-                xlim_max=Xmax,
-                ylim_max=Ymax,
-            )
-            self._log("save: 带坐标曲线图.png OK")
-
-            inv_x = []
-            inv_y = []
-            table = []
-
-            for i, (x_d, y_d) in enumerate(zip(plot_x_disp, plot_y_disp), start=1):
-                px = 0.0 if Ymax <= 1e-12 else float(y_d) / float(Ymax)
-                py = 0.0 if Xmax <= 1e-12 else float(x_d) / float(Xmax)
-
-                x_inv = px * Xmax
-                y_inv = py * Ymax
-
-                x_inv = max(0.0, min(Xmax, x_inv))
-                y_inv = max(0.0, min(Ymax, y_inv))
-
-                inv_x.append(x_inv)
-                inv_y.append(y_inv)
-
-                table.append(
-                    {
-                        "point_index(1-based)": i,
-                        "forward_x": float(x_d),
-                        "forward_y": float(y_d),
-                        "inv_x": float(x_inv),
-                        "inv_y": float(y_inv),
-                        "note": "inv_x=(forward_y/Ymax)*Xmax ; inv_y=(forward_x/Xmax)*Ymax",
-                    }
-                )
-
-            pd.DataFrame(table).to_csv("compensation_table.csv", index=False, encoding="utf-8-sig")
-            self._log("save: compensation_table.csv OK (one-to-one percent swap)")
-
-            self._plot_curve(
-                inv_x,
-                inv_y,
-                title=self.i18n.get("charts.inverse_title"),
-                xlabel=self.i18n.get("charts.inverse_xlabel"),
-                ylabel=self.i18n.get("charts.inverse_ylabel"),
-                filename="反曲线图.png",
-                with_coords=False,
-                xlim_max=Xmax,
-                ylim_max=Ymax,
-            )
-            self._log("save: 反曲线图.png OK (one-to-one percent swap)")
-
-            self._plot_curve(
-                inv_x,
-                inv_y,
-                title=self.i18n.get("charts.inverse_title"),
-                xlabel=self.i18n.get("charts.inverse_xlabel"),
-                ylabel=self.i18n.get("charts.inverse_ylabel"),
-                filename="带坐标反曲线图.png",
-                with_coords=True,
-                xlim_max=Xmax,
-                ylim_max=Ymax,
-            )
-            self._log("save: 带坐标反曲线图.png OK (one-to-one percent swap)")
+            # 不再自动生成图片，改为仅保存 CSV，并在 UI 提示用户点击“生成曲线图”按钮
 
             try:
                 if self.gamepad:
@@ -2002,10 +1944,9 @@ class App(tk.Tk):
             except Exception:
                 self._log("_finish_and_save: release_hold exception", level="warning")
             self._hold_applied = False
-
-            self.status.set(self.i18n.get("hints.export_complete_status").format(log_path=self.log_path))
-            messagebox.showinfo(self.i18n.get("hints.export_success_title"), f"{self.i18n.get('hints.export_success_msg')}\n\n{self.i18n.get('messages.log_path_prefix')}{self.log_path}")
-            self._log("_finish_and_save: SUCCESS")
+            self.status.set(self.i18n.get("messages.ready_to_generate_charts"))
+            messagebox.showinfo(self.i18n.get("ui.generate_charts_prompt_title"), self.i18n.get("ui.generate_charts_prompt_body"))
+            self._log("_finish_and_save: SUCCESS (CSV saved, charts pending by user)")
 
         except Exception:
             if self.logger:
@@ -2024,8 +1965,163 @@ class App(tk.Tk):
             self._test_running = False
             self.is_armed = False
             self.in_trial = False
-            self.mode = "idle"
-            # v1.6: 日志仅 on_close 停止）
+
+    # ===== 图表生成入口 =====
+    def _generate_charts_from_stats(self, stats: pd.DataFrame):
+        # 复用现有参数
+        dz = float(self.deadzone_mag or 0.0)
+        mx = float(self.max_mag.get())
+        Xmax = float(self.x_axis_max.get() or 100.0)
+        Ymax = float(self.y_axis_max.get() or 100.0)
+        if Xmax <= 0:
+            Xmax = 100.0
+        if Ymax <= 0:
+            Ymax = 100.0
+        if mx <= 0:
+            mx = 1.0
+
+        xs_meas = stats["magnitude"].tolist()
+        ys_meas = (stats["omega"].tolist() if "omega" in stats.columns else (2 * math.pi / stats["mean"]).tolist())
+
+        if len(xs_meas) == 0:
+            messagebox.showerror(self.i18n.get("hints.stats_result_empty_title"), self.i18n.get("hints.stats_result_empty_dialog"))
+            return
+
+        ys_mono = pav_isotonic_increasing(ys_meas)
+        x0 = 0.0 if dz <= 0.0 else dz
+        y0 = 0.0
+        y_end = float(ys_mono[-1])
+        if y_end <= 1e-12:
+            y_end = max(ys_mono) if max(ys_mono) > 1e-12 else 1.0
+        x_scale = Xmax / mx
+        y_scale = Ymax / y_end
+        plot_x = [x0]
+        plot_y = [y0]
+        for x, y in zip(xs_meas, ys_mono):
+            if dz > 0 and x <= dz:
+                plot_x.append(float(x))
+                plot_y.append(0.0)
+            else:
+                plot_x.append(float(x))
+                plot_y.append(float(y))
+        plot_x_disp = [v * x_scale for v in plot_x]
+        plot_y_disp = [v * y_scale for v in plot_y]
+
+        # 正向图
+        self._plot_curve(
+            plot_x_disp,
+            plot_y_disp,
+            title=self.i18n.get("charts.curve_title"),
+            xlabel=self.i18n.get("charts.curve_xlabel"),
+            ylabel=self.i18n.get("charts.curve_ylabel"),
+            filename="曲线图.png",
+            with_coords=False,
+            xlim_max=Xmax,
+            ylim_max=Ymax,
+        )
+        self._log("save: 曲线图.png OK")
+        self._plot_curve(
+            plot_x_disp,
+            plot_y_disp,
+            title=self.i18n.get("charts.curve_title"),
+            xlabel=self.i18n.get("charts.curve_xlabel"),
+            ylabel=self.i18n.get("charts.curve_ylabel"),
+            filename="带坐标曲线图.png",
+            with_coords=True,
+            xlim_max=Xmax,
+            ylim_max=Ymax,
+        )
+        self._log("save: 带坐标曲线图.png OK")
+
+        # 反曲线 + 补偿表
+        inv_x = []
+        inv_y = []
+        table = []
+        for i, (x_d, y_d) in enumerate(zip(plot_x_disp, plot_y_disp), start=1):
+            px = 0.0 if Ymax <= 1e-12 else float(y_d) / float(Ymax)
+            py = 0.0 if Xmax <= 1e-12 else float(x_d) / float(Xmax)
+            x_inv = max(0.0, min(Xmax, px * Xmax))
+            y_inv = max(0.0, min(Ymax, py * Ymax))
+            inv_x.append(x_inv)
+            inv_y.append(y_inv)
+            table.append({
+                "point_index(1-based)": i,
+                "forward_x": float(x_d),
+                "forward_y": float(y_d),
+                "inv_x": float(x_inv),
+                "inv_y": float(y_inv),
+                "note": "inv_x=(forward_y/Ymax)*Xmax ; inv_y=(forward_x/Xmax)*Ymax",
+            })
+        pd.DataFrame(table).to_csv("compensation_table.csv", index=False, encoding="utf-8-sig")
+        self._log("save: compensation_table.csv OK (one-to-one percent swap)")
+        self._plot_curve(
+            inv_x,
+            inv_y,
+            title=self.i18n.get("charts.inverse_title"),
+            xlabel=self.i18n.get("charts.inverse_xlabel"),
+            ylabel=self.i18n.get("charts.inverse_ylabel"),
+            filename="反曲线图.png",
+            with_coords=False,
+            xlim_max=Xmax,
+            ylim_max=Ymax,
+        )
+        self._log("save: 反曲线图.png OK (one-to-one percent swap)")
+        self._plot_curve(
+            inv_x,
+            inv_y,
+            title=self.i18n.get("charts.inverse_title"),
+            xlabel=self.i18n.get("charts.inverse_xlabel"),
+            ylabel=self.i18n.get("charts.inverse_ylabel"),
+            filename="带坐标反曲线图.png",
+            with_coords=True,
+            xlim_max=Xmax,
+            ylim_max=Ymax,
+        )
+        self._log("save: 带坐标反曲线图.png OK (one-to-one percent swap)")
+
+    def generate_charts_from_current(self):
+        # 从内存 results 生成
+        df = pd.DataFrame(self.results)
+        if df.empty:
+            messagebox.showerror(self.i18n.get("hints.no_valid_records_title"), self.i18n.get("hints.no_valid_records_dialog"))
+            return
+        df_ok = df[df["seconds"].notna()].copy()
+        if df_ok.empty:
+            messagebox.showerror(self.i18n.get("hints.timing_result_empty_title"), self.i18n.get("hints.timing_result_empty_dialog"))
+            return
+        g = df_ok.groupby("magnitude")["seconds"]
+        stats = g.agg(["count", "mean", "std"]).reset_index()
+        stats["omega"] = 2 * math.pi / stats["mean"]
+        self._generate_charts_from_stats(stats)
+
+    def generate_charts_from_csv(self):
+        # 打开 CSV 生成图表（支持 results.csv 或 curve_summary.csv 结构）
+        try:
+            from tkinter import filedialog
+            path = filedialog.askopenfilename(
+                title=self.i18n.get("ui.select_csv_title"),
+                filetypes=[("CSV", "*.csv"), (self.i18n.get("ui.all_files"), "*.*")],
+            )
+        except Exception:
+            path = None
+        if not path:
+            return
+        try:
+            df = pd.read_csv(path)
+        except Exception as e:
+            messagebox.showerror(self.i18n.get("hints.export_fail_title"), f"CSV load failed: {e}")
+            return
+        # Normalize to stats format
+        if {"magnitude", "omega"}.issubset(df.columns):
+            stats = df.copy()
+        elif {"magnitude", "seconds"}.issubset(df.columns):
+            g = df.groupby("magnitude")["seconds"]
+            stats = g.agg(["count", "mean", "std"]).reset_index()
+            stats["omega"] = 2 * math.pi / stats["mean"]
+        else:
+            messagebox.showerror(self.i18n.get("hints.export_fail_title"), self.i18n.get("errors.csv_format_not_supported"))
+            return
+        self._generate_charts_from_stats(stats)
 
     def _plot_curve(
         self,

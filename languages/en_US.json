@@ -48,6 +48,13 @@
     "control": "Control",
     "start_test": "Start Test",
     "stop_reset": "Stop/Reset",
+    "export_and_charts": "Export & Charts",
+    "generate_charts": "Generate Charts (current)",
+    "generate_from_csv": "Generate Charts from CSV",
+    "generate_charts_prompt_title": "Charts pending",
+    "generate_charts_prompt_body": "CSV saved. Click [Generate Charts] to render images now (or use [Generate from CSV] later).",
+    "select_csv_title": "Select CSV to generate charts",
+    "all_files": "All Files",
     "author_footer": "Author: Bilibili: {author}   |   Version: {version}",
     "left_stick": "Left Stick (Mouse Drag)",
     "right_stick": "Right Stick (Mouse Drag)",
@@ -112,6 +119,7 @@
     "record_saved": "Recorded: m={magnitude:.4f} took {time:.4f}s\nNext: m={next_mag:.4f}\nPoint progress: {current}/{total_points}\nPress [Record Key] to start next round.",
     "retry_no_test": "⚠️ No test started yet, cannot retry.",
     "test_not_enabled": "Please click [Enable Emulation] first.",
+    "ready_to_generate_charts": "✅ CSV saved. Ready to generate charts.",
     "param_error": "Fix as prompted: sample points 2~10; and 0<=MIN<MAX<=1.",
     "retry_reset_message": "Retry Test - Reset current point (m={magnitude:.4f})\\nRetries needed: {repeat_count}\\nPress [Record Key] to start retesting.",
     "first_point_text_no_deadzone": "No deadzone: 1st point fixed at (0,0).",
@@ -191,6 +199,7 @@
   "errors": {
     "sample_count_invalid_type": "Sample count must be an integer (2~100).",
     "sample_count_out_of_range": "Sample count range: 2~100.",
-    "magnitude_range_invalid": "Magnitude range must satisfy: 0 <= MIN < MAX <= 1."
+    "magnitude_range_invalid": "Magnitude range must satisfy: 0 <= MIN < MAX <= 1.",
+    "csv_format_not_supported": "CSV format not supported (need results.csv or curve_summary.csv structure)."
   }
 }

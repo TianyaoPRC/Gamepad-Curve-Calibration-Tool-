@@ -48,6 +48,13 @@
     "control": "掌控 ⚡",
     "start_test": "开启试炼 🔥",
     "stop_reset": "止息/重启 ⏸️",
+    "export_and_charts": "导出与图谱之匣 🌌",
+    "generate_charts": "炼制曲线图（当前试炼） 🔥",
+    "generate_from_csv": "由CSV再炼曲线图 📜",
+    "generate_charts_prompt_title": "图谱待炼成 ⚡",
+    "generate_charts_prompt_body": "CSV 已封存。点击【炼制曲线图】立刻绘制；或稍后以【由CSV再炼】取之。 🔮",
+    "select_csv_title": "择取CSV以炼图 📜",
+    "all_files": "万物之卷 🌠",
     "author_footer": "作者铭文：哔哩哔哩：{author}   |   版本：{version} ✨",
     "left_stick": "左摇杆（鼠标拖动之秘术） 🌀",
     "right_stick": "右摇杆（鼠标拖动之秘术） 🔮",
@@ -112,6 +119,7 @@
     "record_saved": "已记录：m={magnitude:.4f} 用时 {time:.4f}s\\n下一步：m={next_mag:.4f}\\n点进度：{current}/{total_points}\\n按【记录键】开始下一圈。",
     "retry_no_test": "⚠️ 还未开始任何试炼，无法重试。",
     "test_not_enabled": "请先点击【启用模拟掌控器】。",
+    "ready_to_generate_charts": "✅ CSV 已封存，可炼曲线图。 🌟",
     "param_error": "按提示修正：采样点 2~10；且 0<=MIN<MAX<=1。",
     "retry_reset_message": "【重新测试】已重置当前点（m={magnitude:.4f}）\\n需重试次数：{repeat_count}\\n按【记录键】开始重新测试。",
     "first_point_text_no_deadzone": "无死区：第一个点固定为 (0,0)。",
@@ -191,6 +199,7 @@
   "errors": {
     "sample_count_invalid_type": "采样点数量必须为整数（2~100）。",
     "sample_count_out_of_range": "采样点数量范围：2~100。",
-    "magnitude_range_invalid": "幅值范围须满足：0 <= MIN < MAX <= 1。"
+    "magnitude_range_invalid": "幅值范围须满足：0 <= MIN < MAX <= 1。",
+    "csv_format_not_supported": "CSV 格式不合（需 results.csv 或 curve_summary.csv 之形）。 ⚠️"
   }
 }
