@@ -6,10 +6,10 @@
 ![Version](https://img.shields.io/badge/version-1.8.6-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%207+-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Languages](https://img.shields.io/badge/languages-EN%20%7C%20ZH%20%7C%20JA-brightgreen)
+![Languages](https://img.shields.io/badge/languages-EN%20%7C%20ZH-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.7+-blue)
 
-**[中文版本](#-中文版本中文详细介绍) | [English](#-english-version) | [日本語](#-日本語版)**
+**[中文版本](#-中文版本中文详细介绍) | [English](#-english-version) | [日本語参考](#-日本語翻訳版参考用)**
 
 ---
 
@@ -39,7 +39,7 @@
 | **实时曲线可视化** | 测试过程中实时显示游戏的手柄响应曲线图 |
 | **多游戏对比** | 对比不同游戏的曲线差异，找出手感不一致的原因 |
 | **灵敏度建议** | 基于曲线分析，建议游戏内灵敏度调整方向 |
-| **完整国际化** | 内置英文、简体中文、日文；支持用户自定义翻译 |
+| **完整国际化** | 内置英文、简体中文；支持用户自定义翻译 |
 | **数据导出** | 导出测试结果供参考和对比 |
 
 ### 🚀 为什么玩家需要这个工具？
@@ -199,7 +199,7 @@ This is a **game response curve detection tool** designed for gamers. Its core p
 | **Real-time Visualization** | Display game response curves in real-time |
 | **Multi-Game Comparison** | Compare curves between games |
 | **Sensitivity Suggestions** | Recommend sensitivity adjustments |
-| **Internationalization** | EN/ZH/JA built-in, custom translations supported |
+| **Internationalization** | EN/ZH built-in, custom translations supported |
 | **Data Export** | Export test results for reference |
 
 ### 🚀 Why Gamers Need This
@@ -286,7 +286,7 @@ Add new languages easily:
 
 ---
 
-## 🌍 日本語版
+## 📝 日本語翻訳版（参考用）
 
 ### 📖 「ゲームパッドカーブキャリブレーションツール」とは？
 
@@ -312,7 +312,7 @@ Add new languages easily:
 | **リアルタイム可視化** | ゲーム応答カーブをリアルタイム表示 |
 | **マルチゲーム比較** | ゲーム間のカーブ差を比較 |
 | **感度推奨** | 感度調整の方向を提案 |
-| **国際化** | EN/ZH/JA内蔵、カスタム翻訳対応 |
+| **国際化** | EN/ZH内蔵、カスタム翻訳対応 |
 | **データエクスポート** | テスト結果を参照用にエクスポート |
 
 ### 🚀 ゲーマーがこのツールを必要とする理由
