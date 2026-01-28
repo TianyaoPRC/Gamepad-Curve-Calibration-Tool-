@@ -9,7 +9,7 @@
 ![Languages](https://img.shields.io/badge/languages-EN%20%7C%20ZH-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.7+-blue)
 
-**[中文版本](#-中文版本中文详细介绍) | [English](#-english-version)**
+**[中文版本](#-中文版本中文详细介绍) | [English](#-english-version) | [日本語参考](#-日本語翻訳版参考用)**
 
 ---
 
