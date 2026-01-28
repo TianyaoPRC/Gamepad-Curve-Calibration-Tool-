@@ -1,6 +1,14 @@
-# Gamepad Curve Calibration Tool | 游戏摇杆曲线探测器
+# Gamepad Curve Calibration Tool
+# 游戏摇杆曲线探测器
 
-[English](#english) | [中文](#中文) | [日本語](#日本語)
+**Multi-language Gamepad Calibration & Curve Detection Toolkit**
+
+[English](#english) | [中文](#中文) | [日本語](#日本語) | [About](#about)
+
+![Version](https://img.shields.io/badge/version-1.8.6-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%207+-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Language](https://img.shields.io/badge/language-Python-blue)
 
 ---
 
@@ -193,5 +201,63 @@ Contributions welcome! Please submit pull requests or open issues for bugs/featu
 ### Version
 v1.8.6
 
-### Contact & Support
-For issues, feature requests, or questions, please open an issue on GitHub.
+---
+
+## About
+
+### Project Vision
+Gamepad Curve Calibration Tool (游戏摇杆曲线探测器) aims to provide gamers and developers with a professional-grade solution for:
+- **Precise Hardware Calibration**: Eliminate stick drift and inconsistent input responses
+- **Curve Analysis**: Understand and optimize joystick response characteristics for competitive gaming
+- **Cross-platform Compatibility**: Support diverse gamepad types and protocols
+- **Global Accessibility**: Full multi-language support enabling worldwide adoption
+
+### Why This Project?
+Modern gaming demands precision. Whether you're a casual gamer dealing with analog stick drift or a developer optimizing controller input curves, this tool provides scientific calibration and detailed insights.
+
+### Technical Highlights
+- **ViGEm Integration**: Virtual gamepad output via ViGEmBus for game compatibility
+- **Advanced Curve Detection**: Supports linear, exponential, cubic, and custom curve patterns
+- **JSON-based Localization**: Easy community translations without code modifications
+- **Real-time Visualization**: Live graphical feedback during calibration
+- **Comprehensive Logging**: Detailed calibration records for debugging and optimization
+
+### Who Should Use This?
+- **Gamers**: Calibrate controllers for competitive titles (FPS, Racing, Fighting games)
+- **Developers**: Test gamepad input curves for game development
+- **Hardware Enthusiasts**: Analyze and optimize controller performance
+- **Accessibility Users**: Customize controls for specific needs
+
+### Community & Contributions
+We actively welcome:
+- Bug reports and feature suggestions via [Issues](https://github.com/TianyaoPRC/Gamepad-Curve-Calibration-Tool/issues)
+- Language translations (any language via JSON translation)
+- Code contributions and improvements
+- Documentation enhancements
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+### Roadmap
+- [ ] Support for controller pressure sensitivity calibration
+- [ ] Advanced analytics dashboard
+- [ ] Profile management system
+- [ ] Mobile app companion
+- [ ] Integration with popular game engines (Unity, Unreal)
+
+### Support
+- 📖 **Documentation**: See [README](#english) sections above
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/TianyaoPRC/Gamepad-Curve-Calibration-Tool/issues)
+- 💬 **Discussions**: GitHub Discussions (coming soon)
+- 🌐 **Website**: [Coming soon]
+
+### Credits
+- Built with Python and PyQt
+- ViGEmBus integration for virtual gamepad support
+- Community translations and contributions
+
+### Legal
+Licensed under MIT. See [LICENSE](LICENSE) for details.
+
+---
+
+**Developed by TianyaoPRC** | Updated: January 2026
