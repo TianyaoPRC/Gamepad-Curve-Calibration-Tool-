@@ -60,7 +60,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='游戏摇杆曲线探测器_v1.8.5',
+    name='游戏摇杆曲线探测器_v1.8.6',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -79,5 +79,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='游戏摇杆曲线探测器_v1.8.5'
+    name='游戏摇杆曲线探测器_v1.8.6'
 )

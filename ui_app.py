@@ -20,7 +20,7 @@ from i18n import init_i18n, get_i18n, T
 
 
 # ===== App Meta =====
-APP_VERSION = "v1.8.5"
+APP_VERSION = "v1.8.6"
 APP_NAME = "游戏摇杆曲线探测器"
 APP_AUTHOR = "刘云耀"
 APP_TITLE = f"{APP_NAME} {APP_VERSION}  |  哔哩哔哩：{APP_AUTHOR}"
@@ -1944,6 +1944,12 @@ class App(tk.Tk):
             except Exception:
                 self._log("_finish_and_save: release_hold exception", level="warning")
             self._hold_applied = False
+            
+            # 测试完成，摇杆归零静止
+            if self.right_stick is not None:
+                self.right_stick.set_value(0.0, 0.0)
+                self._log("_finish_and_save: right_stick zeroed")
+            
             self.status.set(self.i18n.get("messages.ready_to_generate_charts"))
             messagebox.showinfo(self.i18n.get("ui.generate_charts_prompt_title"), self.i18n.get("ui.generate_charts_prompt_body"))
             self._log("_finish_and_save: SUCCESS (CSV saved, charts pending by user)")
