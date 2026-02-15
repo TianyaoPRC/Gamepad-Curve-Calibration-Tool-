@@ -5,6 +5,7 @@
 /dist/
 /build/
 /logs/
+/前置/
 *.pyc
 __pycache__/
 controllers/__pycache__/

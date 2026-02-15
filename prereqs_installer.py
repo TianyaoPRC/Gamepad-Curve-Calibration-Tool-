@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import subprocess
 import sys
 from typing import Optional, List, Tuple
@@ -28,6 +29,44 @@ def _base_dir() -> str:
 
 def _prereqs_dir() -> str:
     return os.path.join(_base_dir(), "prereqs")
+
+
+def _user_app_dir() -> str:
+    # 用户可访问的程序目录（frozen 用 exe 目录）
+    try:
+        if _is_frozen() and getattr(sys, "executable", None):
+            return os.path.dirname(sys.executable)
+    except Exception:
+        pass
+    return os.getcwd()
+
+
+def _export_prereqs_for_manual_install() -> None:
+    """将前置安装包复制到程序同目录下的“前置”文件夹，便于手动安装。"""
+    src_dir = _prereqs_dir()
+    if not os.path.isdir(src_dir):
+        return
+    try:
+        dst_dir = os.path.join(_user_app_dir(), "前置")
+        os.makedirs(dst_dir, exist_ok=True)
+    except Exception:
+        return
+
+    try:
+        for fn in os.listdir(src_dir):
+            if not fn.lower().endswith(".exe"):
+                continue
+            src = os.path.join(src_dir, fn)
+            dst = os.path.join(dst_dir, fn)
+            try:
+                if os.path.exists(dst):
+                    if os.path.getsize(dst) == os.path.getsize(src):
+                        continue
+                shutil.copy2(src, dst)
+            except Exception:
+                continue
+    except Exception:
+        pass
 
 
 def _run_sc_query(service_name: str) -> Tuple[bool, str]:
@@ -145,6 +184,9 @@ def _ask_yes_no(title: str, message: str) -> bool:
 def ensure_prereqs_or_exit() -> None:
     # 检查 ViGEmBus，没有就走安装流程
     prereqs = _prereqs_dir()
+
+    # 无论是否弹窗，都导出一份前置安装包到程序目录
+    _export_prereqs_for_manual_install()
 
     if is_vigem_installed():
         return

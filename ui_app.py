@@ -20,7 +20,7 @@ from i18n import init_i18n, get_i18n, T
 
 
 # ===== App Meta =====
-APP_VERSION = "v1.8.6"
+APP_VERSION = "v1.8.7"
 APP_NAME = "游戏摇杆曲线探测器"
 APP_AUTHOR = "刘云耀"
 APP_TITLE = f"{APP_NAME} {APP_VERSION}  |  哔哩哔哩：{APP_AUTHOR}"
@@ -240,7 +240,33 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.itemconfigure(self.inner_id, width=e.width)
 
     def _on_mousewheel(self, e):
+        try:
+            w = e.widget
+            cls = w.winfo_class()
+        except Exception:
+            w = None
+            cls = ""
+
+        # 鼠标在输入控件上时不滚动，避免改动数值/选项
+        if cls in {"TEntry", "TCombobox", "TSpinbox", "Entry", "Spinbox"}:
+            return "break"
+
+        # 仅在右侧滚动区域内滚动
+        cur = w
+        in_scroll = False
+        while cur is not None:
+            if cur == self.inner or cur == self.canvas:
+                in_scroll = True
+                break
+            try:
+                cur = cur.master
+            except Exception:
+                cur = None
+        if not in_scroll:
+            return
+
         self.canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        return "break"
 
 
 class App(tk.Tk):
@@ -662,6 +688,10 @@ class App(tk.Tk):
             self._update_hotkey_hint(has_symbol_digit=True)
             return
 
+        if old == "keyboard_scan":
+            self._update_hotkey_hint(has_symbol_digit=False)
+            return
+
         if old != "keyboard_name":
             self.hotkey_backend.set("keyboard_name")
             self._log(f"auto-switch backend -> keyboard_name (no symbol/digit) reason={reason}", level="info")
@@ -830,6 +860,12 @@ class App(tk.Tk):
 
             # 自动切 scan
             self.hotkey_backend.set("keyboard_scan")
+            self.start_scan = self._ensure_scan_code(self.start_key, self.start_scan)
+            self.record_scan = self._ensure_scan_code(self.record_key, self.record_scan)
+            self.deadzone_scan = self._ensure_scan_code(self.deadzone_key, self.deadzone_scan)
+            self.deadzone_back_scan = self._ensure_scan_code(self.deadzone_back_key, self.deadzone_back_scan)
+            self.end_deadzone_scan = self._ensure_scan_code(self.end_deadzone_key, self.end_deadzone_scan)
+            self.retry_last_scan = self._ensure_scan_code(self.retry_last_key, self.retry_last_scan)
             self._install_scan_hook()
 
             self.hotkey_compat_hint.set(self.i18n.get("ui.hotkey_hint_failed"))
